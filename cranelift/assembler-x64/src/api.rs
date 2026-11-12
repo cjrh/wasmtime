@@ -235,6 +235,20 @@ pub trait RegisterVisitor<R: Registers> {
         }
     }
 
+    /// Handle a read-only [`XmmMem`] operand whose register form reads the
+    /// same low `bytes` bytes that its memory form reads, so a load of a full
+    /// register image can be folded into it. `align` is set when the memory
+    /// form faults on an address that is not 16-byte aligned.
+    fn read_xmm_mem_foldable(
+        &mut self,
+        op: &mut XmmMem<R::ReadXmm, R::ReadGpr>,
+        bytes: u8,
+        align: bool,
+    ) {
+        let _ = (bytes, align);
+        self.read_xmm_mem(op);
+    }
+
     /// Helper method to handle a write [`XmmMem`] operand.
     fn write_xmm_mem(&mut self, op: &mut XmmMem<R::WriteXmm, R::ReadGpr>) {
         match op {

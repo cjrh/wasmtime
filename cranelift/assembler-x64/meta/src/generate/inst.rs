@@ -244,7 +244,25 @@ impl dsl::Inst {
                     RegMem(loc) => {
                         let reg = reg.unwrap();
                         let reg_lower = reg.to_string().to_lowercase();
-                        fmtln!(f, "visitor.{mutability}_{reg_lower}_mem(&mut self.{loc});");
+                        // A read-only XMM operand reads the same low bytes
+                        // from a register as from memory, so a register
+                        // allocator's reload of a spilled value can be
+                        // folded into it. `insertps` is the exception: its
+                        // immediate selects a source lane of a register and
+                        // ignores that selection for memory.
+                        let foldable = matches!(reg, dsl::RegClass::Xmm)
+                            && matches!(o.mutability, dsl::Mutability::Read)
+                            && !self.mnemonic.ends_with("insertps");
+                        if foldable {
+                            let bytes = o.location.bits() / 8;
+                            // Legacy SSE memory operands of 16 bytes fault
+                            // when unaligned; VEX and EVEX ones do not.
+                            let align = o.align
+                                || (matches!(self.encoding, dsl::Encoding::Rex(_)) && bytes >= 16);
+                            fmtln!(f, "visitor.read_xmm_mem_foldable(&mut self.{loc}, {bytes}, {align});");
+                        } else {
+                            fmtln!(f, "visitor.{mutability}_{reg_lower}_mem(&mut self.{loc});");
+                        }
                     }
                     Mem(loc) => {
                         // Note that this is always "read" because from a
