@@ -38,3 +38,8 @@ cranelift.workspace = true
 smallvec = { workspace = true }
 pulley-interpreter = { workspace = true, features = ["disas", "std", "interp"] }
 libm = { workspace = true }
+
+[dev-dependencies]
+# Used by `examples/reload_fold_fuzz.rs`.
+cranelift-fuzzgen = { workspace = true }
+arbitrary = { workspace = true }

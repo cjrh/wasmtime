@@ -1,4 +1,7 @@
 test run
+set regalloc_fold_reloads=true
+set regalloc_forward_spills=true
+set regalloc_checker=true
 target x86_64 has_avx has_avx2 has_sse41
 set regalloc_algorithm=single_pass
 target x86_64 has_avx has_avx2 has_sse41

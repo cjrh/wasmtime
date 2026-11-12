@@ -747,10 +747,12 @@ name = "cranelift-filetests"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "arbitrary",
  "cranelift",
  "cranelift-codegen",
  "cranelift-control",
  "cranelift-frontend",
+ "cranelift-fuzzgen",
  "cranelift-interpreter",
  "cranelift-jit",
  "cranelift-module",
