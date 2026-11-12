@@ -381,6 +381,22 @@ impl<R: AsReg, M: AsReg> XmmMem<R, M> {
         }
     }
 
+    /// Pretty-print the operand as a 256-bit YMM register or memory location.
+    pub fn to_ymm_string(&self) -> String {
+        match self {
+            XmmMem::Xmm(xmm) => crate::xmm::to_ymm(xmm.to_string(None)),
+            XmmMem::Mem(amode) => amode.to_string(),
+        }
+    }
+
+    /// Like [`Self::to_ymm_string`], in XED's dialect.
+    pub fn to_ymm_string_xed(&self) -> String {
+        match self {
+            XmmMem::Xmm(xmm) => crate::xmm::to_ymm(xmm.to_string(None)),
+            XmmMem::Mem(amode) => alloc::format!("{amode:#}"),
+        }
+    }
+
     /// Return the [`RexPrefix`] for each variant of this [`XmmMem`].
     #[must_use]
     pub(crate) fn as_rex_prefix(&self, enc_reg: u8, has_w_bit: bool, uses_8bit: bool) -> RexPrefix {

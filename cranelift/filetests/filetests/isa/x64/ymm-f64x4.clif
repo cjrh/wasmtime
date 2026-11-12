@@ -1,0 +1,384 @@
+test compile precise-output
+target x86_64 has_avx has_avx2 has_sse41
+
+function %add(i64, i64, i64) {
+block0(v0: i64, v1: i64, v2: i64):
+    v3 = load.f64x4 v0
+    v4 = load.f64x4 v1
+    v5 = fadd v3, v4
+    store v5, v2
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm5
+;   vaddpd (%rsi), %ymm5, %ymm5
+;   vmovupd %ymm5, (%rdx)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm5 ; trap: heap_oob
+;   vaddpd (%rsi), %ymm5, %ymm5 ; trap: heap_oob
+;   vmovupd %ymm5, (%rdx) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+
+function %arith(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fsub v1, v1
+    v3 = fmul v2, v1
+    v4 = fdiv v3, v1
+    v5 = sqrt v4
+    store v5, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm6
+;   vsubpd %ymm6, %ymm6, %ymm7
+;   vmulpd %ymm6, %ymm7, %ymm7
+;   vdivpd %ymm6, %ymm7, %ymm6
+;   vsqrtpd %ymm6, %ymm6
+;   vmovupd %ymm6, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm6 ; trap: heap_oob
+;   vsubpd %ymm6, %ymm6, %ymm7
+;   vmulpd %ymm6, %ymm7, %ymm7
+;   vdivpd %ymm6, %ymm7, %ymm6
+;   vsqrtpd %ymm6, %ymm6
+;   vmovupd %ymm6, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %fcmp_gt_select(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = load.f64x4 v0+32
+    v3 = fcmp gt v1, v2
+    v4 = bitcast.f64x4 v3
+    v5 = bitselect v4, v1, v2
+    store v5, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm7
+;   vmovupd 0x20(%rdi), %ymm0
+;   vcmpltpd %ymm7, %ymm0, %ymm1
+;   vandpd %ymm7, %ymm1, %ymm5
+;   vandnpd %ymm0, %ymm1, %ymm7
+;   vorpd %ymm7, %ymm5, %ymm0
+;   vmovupd %ymm0, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm7 ; trap: heap_oob
+;   vmovupd 0x20(%rdi), %ymm0 ; trap: heap_oob
+;   vcmpltpd %ymm7, %ymm0, %ymm1
+;   vandpd %ymm7, %ymm1, %ymm5
+;   vandnpd %ymm0, %ymm1, %ymm7
+;   vorpd %ymm7, %ymm5, %ymm0
+;   vmovupd %ymm0, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %bitwise(i64) {
+block0(v0: i64):
+    v1 = load.i64x4 v0
+    v2 = load.i64x4 v0+32
+    v3 = bnot v2
+    v4 = band v1, v3
+    v5 = bor v4, v1
+    v6 = bxor v5, v3
+    store v6, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm0
+;   vmovupd 0x20(%rdi), %ymm1
+;   vcmptruepd %ymm1, %ymm1, %ymm7
+;   vxorpd %ymm7, %ymm1, %ymm2
+;   vandnpd %ymm0, %ymm1, %ymm1
+;   vorpd %ymm0, %ymm1, %ymm0
+;   vxorpd %ymm2, %ymm0, %ymm0
+;   vmovupd %ymm0, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm0 ; trap: heap_oob
+;   vmovupd 0x20(%rdi), %ymm1 ; trap: heap_oob
+;   vcmptruepd %ymm1, %ymm1, %ymm7
+;   vxorpd %ymm7, %ymm1, %ymm2
+;   vandnpd %ymm0, %ymm1, %ymm1
+;   vorpd %ymm0, %ymm1, %ymm0
+;   vxorpd %ymm2, %ymm0, %ymm0
+;   vmovupd %ymm0, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %splat_insert(f64, i64, i64) {
+block0(v0: f64, v1: i64, v2: i64):
+    v3 = splat.f64x4 v0
+    v4 = insertlane v3, v0, 2
+    store v4, v2
+    v5 = splat.i64x4 v1
+    v6 = insertlane v5, v1, 3
+    store v6, v2+32
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vbroadcastsd %xmm0, %ymm1
+;   vbroadcastsd %xmm0, %ymm0
+;   vblendpd $0x4, %ymm0, %ymm1, %ymm0
+;   vmovupd %ymm0, (%rsi)
+;   vmovq %rdi, %xmm0
+;   vpbroadcastq %xmm0, %ymm0
+;   vmovq %rdi, %xmm1
+;   vpbroadcastq %xmm1, %ymm1
+;   vblendpd $0x8, %ymm1, %ymm0, %ymm0
+;   vmovupd %ymm0, 0x20(%rsi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vbroadcastsd %xmm0, %ymm1
+;   vbroadcastsd %xmm0, %ymm0
+;   vblendpd $4, %ymm0, %ymm1, %ymm0
+;   vmovupd %ymm0, (%rsi) ; trap: heap_oob
+;   vmovq %rdi, %xmm0
+;   vpbroadcastq %xmm0, %ymm0
+;   vmovq %rdi, %xmm1
+;   vpbroadcastq %xmm1, %ymm1
+;   vblendpd $8, %ymm1, %ymm0, %ymm0
+;   vmovupd %ymm0, 0x20(%rsi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %extract_f64(i64) -> f64, f64 {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = extractlane v1, 0
+    v3 = extractlane v1, 3
+    return v2, v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm0
+;   vextractf128 $0x1, %ymm0, %xmm3
+;   vpshufd $0xee, %xmm3, %xmm1
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm0 ; trap: heap_oob
+;   vextractf128 $1, %ymm0, %xmm3
+;   vpshufd $0xee, %xmm3, %xmm1
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %extract_i64(i64) -> i64, i64 {
+block0(v0: i64):
+    v1 = load.i64x4 v0
+    v2 = extractlane v1, 1
+    v3 = extractlane v1, 2
+    return v2, v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm5
+;   vpextrq $0x1, %xmm5, %rax
+;   vextractf128 $0x1, %ymm5, %xmm4
+;   vmovq %xmm4, %rdx
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm5 ; trap: heap_oob
+;   vpextrq $1, %xmm5, %rax
+;   vextractf128 $1, %ymm5, %xmm4
+;   vmovq %xmm4, %rdx
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %halves(i64) -> f64x2 {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = x86_vextractf128.f64x2 v1, 0
+    v3 = x86_vextractf128.f64x2 v1, 1
+    v4 = fadd v2, v3
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm4
+;   vextractf128 $0x1, %ymm4, %xmm5
+;   vaddpd %xmm5, %xmm4, %xmm0
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm4 ; trap: heap_oob
+;   vextractf128 $1, %ymm4, %xmm5
+;   vaddpd %xmm5, %xmm4, %xmm0
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %concat(f64x2, f64x2, i64) {
+block0(v0: f64x2, v1: f64x2, v2: i64):
+    v3 = x86_vinsertf128.f64x4 v0, v1
+    store v3, v2
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vinsertf128 $0x1, %xmm1, %ymm0, %ymm4
+;   vmovupd %ymm4, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vinsertf128 $1, %xmm1, %ymm0, %ymm4
+;   vmovupd %ymm4, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+function %constant(i64) {
+block0(v0: i64):
+    v1 = vconst.f64x4 [0x1.0 0x2.0 0x3.0 0x4.0]
+    store v1, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rip), %ymm2
+;   vmovupd %ymm2, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd 0x14(%rip), %ymm2
+;   vmovupd %ymm2, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   .byte 0xf0, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+;   .byte 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+;   .byte 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+;   .byte 0x10, 0x40
+

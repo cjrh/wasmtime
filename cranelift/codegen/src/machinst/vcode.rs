@@ -1060,7 +1060,7 @@ impl<I: VCodeInst> VCode<I> {
                                 let from_rreg = Reg::from(from);
                                 let to_rreg = Writable::from_reg(Reg::from(to));
                                 debug_assert_eq!(from.class(), to.class());
-                                let ty = I::canonical_type_for_rc(from.class());
+                                let ty = self.abi.canonical_type_for_rc(from.class());
                                 let mv = I::gen_move(to_rreg, from_rreg, ty);
                                 do_emit(&mv, &mut disasm, &mut buffer, &mut state);
                             }

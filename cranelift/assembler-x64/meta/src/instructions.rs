@@ -33,6 +33,7 @@ mod stack;
 mod sub;
 mod unpack;
 mod xor;
+mod ymm;
 
 use crate::dsl::{Feature, Inst, Mutability, OperandKind};
 use std::collections::HashMap;
@@ -73,6 +74,7 @@ pub fn list() -> Vec<Inst> {
     all.extend(sub::list());
     all.extend(unpack::list());
     all.extend(xor::list());
+    all.extend(ymm::list());
 
     check_avx_alternates(&mut all);
 

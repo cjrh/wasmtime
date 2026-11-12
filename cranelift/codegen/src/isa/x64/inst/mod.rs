@@ -321,6 +321,9 @@ impl Inst {
                     _ if (ty.is_float() || ty.is_vector()) && ty.bits() == 128 => {
                         asm::inst::movdqu_a::new(to_reg, from_addr).into()
                     }
+                    _ if ty.is_vector() && ty.bits() == 256 => {
+                        asm::inst::vmovupd_ya::new(to_reg, from_addr).into()
+                    }
                     _ => unimplemented!("unable to load type: {}", ty),
                 };
                 Inst::External { inst }
@@ -360,6 +363,9 @@ impl Inst {
                     types::F64X2 => asm::inst::movupd_b::new(to_addr, from_reg).into(),
                     _ if (ty.is_float() || ty.is_vector()) && ty.bits() == 128 => {
                         asm::inst::movdqu_b::new(to_addr, from_reg).into()
+                    }
+                    _ if ty.is_vector() && ty.bits() == 256 => {
+                        asm::inst::vmovupd_yb::new(to_addr, from_reg).into()
                     }
                     _ => unimplemented!("unable to store type: {}", ty),
                 }
@@ -1386,6 +1392,11 @@ impl MachInst for Inst {
                     _ if (ty.is_float() || ty.is_vector()) && ty.bits() <= 128 => {
                         asm::inst::movdqa_a::new(dst_reg, src_reg).into()
                     }
+                    // A legacy-SSE move would keep the destination's upper
+                    // half, so a 256-bit value needs the VEX.256 move.
+                    _ if ty.is_vector() && ty.bits() == 256 => {
+                        asm::inst::vmovapd_yr::new(dst_reg, src_reg).into()
+                    }
                     _ => unimplemented!("unable to move type: {}", ty),
                 }
             }
@@ -1423,6 +1434,9 @@ impl MachInst for Inst {
                     slice::from_ref(&types[ty.bytes().ilog2() as usize - 1]),
                 ))
             }
+            // 256-bit vectors live in a whole YMM register. Only functions
+            // accepted by `ymm::check_function` reach lowering with them.
+            _ if ty.is_vector() && ty.bits() == 256 => Ok((&[RegClass::Float], &[types::I8X32])),
             _ => Err(CodegenError::Unsupported(format!(
                 "Unexpected SSA-value type: {ty}"
             ))),

@@ -583,6 +583,14 @@ pub trait ABIMachineSpec {
         alloc_tmp: F,
     ) -> SmallVec<[Self::I; 8]>;
 
+    /// The canonical type for float-class registers in `f`, when `f` holds
+    /// vectors wider than the class's default canonical type. Moves, spills
+    /// and reloads in such a function use this type so that they keep the
+    /// whole register. `None` (the default) keeps the default type.
+    fn wide_float_canonical_type(_f: &ir::Function) -> Option<Type> {
+        None
+    }
+
     /// Get the number of spillslots required for the given register-class.
     fn get_number_of_spillslots_for_value(
         rc: RegClass,
@@ -1161,6 +1169,8 @@ pub struct Callee<M: ABIMachineSpec> {
     sig: Sig,
     /// Defined dynamic types.
     dynamic_type_sizes: HashMap<Type, u32>,
+    /// See [`ABIMachineSpec::wide_float_canonical_type`].
+    wide_float_type: Option<Type>,
     /// Offsets to each dynamic stackslot.
     dynamic_stackslots: PrimaryMap<DynamicStackSlot, u32>,
     /// Offsets to each sized stackslot.
@@ -1330,6 +1340,7 @@ impl<M: ABIMachineSpec> Callee<M> {
             sig,
             dynamic_stackslots,
             dynamic_type_sizes,
+            wide_float_type: M::wide_float_canonical_type(f),
             sized_stackslots,
             sized_stackslot_keys,
             stackslots_size,
@@ -2437,7 +2448,26 @@ impl<M: ABIMachineSpec> Callee<M> {
                 .map(|(_k, v)| v)
                 .unwrap()
         };
+        let max = match self.wide_float_type {
+            Some(ty) => max.max(ty.bytes()),
+            None => max,
+        };
         M::get_number_of_spillslots_for_value(rc, max, &self.isa_flags)
+    }
+
+    /// The type that moves, spills and reloads of a whole `rc` register use
+    /// in this function; see [`ABIMachineSpec::wide_float_canonical_type`].
+    pub fn canonical_type_for_rc(&self, rc: RegClass) -> Type {
+        match (rc, self.wide_float_type) {
+            (RegClass::Float, Some(ty)) => ty,
+            _ => M::I::canonical_type_for_rc(rc),
+        }
+    }
+
+    /// Whether this function holds vectors wider than the float class's
+    /// default canonical type.
+    pub fn uses_wide_float_regs(&self) -> bool {
+        self.wide_float_type.is_some()
     }
 
     /// Get the spill slot offset relative to the fixed allocation area start.
@@ -2447,7 +2477,7 @@ impl<M: ABIMachineSpec> Callee<M> {
 
     /// Generate a spill.
     pub fn gen_spill(&self, to_slot: SpillSlot, from_reg: RealReg) -> M::I {
-        let ty = M::I::canonical_type_for_rc(from_reg.class());
+        let ty = self.canonical_type_for_rc(from_reg.class());
         debug_assert_eq!(<M>::I::rc_for_type(&ty).unwrap().1, &[ty]);
 
         let sp_off = self.get_spillslot_offset(to_slot);
@@ -2459,7 +2489,7 @@ impl<M: ABIMachineSpec> Callee<M> {
 
     /// Generate a reload (fill).
     pub fn gen_reload(&self, to_reg: Writable<RealReg>, from_slot: SpillSlot) -> M::I {
-        let ty = M::I::canonical_type_for_rc(to_reg.to_reg().class());
+        let ty = self.canonical_type_for_rc(to_reg.to_reg().class());
         debug_assert_eq!(<M>::I::rc_for_type(&ty).unwrap().1, &[ty]);
 
         let sp_off = self.get_spillslot_offset(from_slot);

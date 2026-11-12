@@ -859,6 +859,10 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         insts
     }
 
+    fn wide_float_canonical_type(f: &ir::Function) -> Option<Type> {
+        super::ymm::uses_ymm(f).then_some(types::I8X32)
+    }
+
     fn get_number_of_spillslots_for_value(
         rc: RegClass,
         vector_scale: u32,

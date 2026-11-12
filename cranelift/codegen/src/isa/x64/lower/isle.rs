@@ -285,7 +285,11 @@ pub(crate) fn lower_branch(
     generated_code::constructor_lower_branch(&mut isle_ctx, branch, &targets)
 }
 
+include!("isle_ymm.rs");
+
 impl Context for IsleContext<'_, '_, MInst, X64Backend> {
+    ymm_isle_helpers!();
+
     isle_lower_prelude_methods!();
     isle_assembler_methods!();
 

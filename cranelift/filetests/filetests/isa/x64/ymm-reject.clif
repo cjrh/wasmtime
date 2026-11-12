@@ -1,0 +1,106 @@
+test compile expect-fail
+target x86_64 has_avx has_avx2 has_sse41
+
+;; Each function differs from an accepted one (see `ymm-f64x4.clif`) in one
+;; respect that `isa/x64/ymm.rs` rejects.
+
+;; Windows x64 preserves xmm6-xmm15, and only their low 128 bits.
+function %windows(i64) windows_fastcall {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fadd v1, v1
+    store v2, v0
+    return
+}
+
+function %preserve_all(i64) preserve_all {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    store v1, v0
+    return
+}
+
+function %call_preserve_all(i64) {
+    sig0 = () preserve_all
+    fn0 = %g sig0
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    call fn0()
+    store v1, v0
+    return
+}
+
+function %param(f64x4) {
+block0(v0: f64x4):
+    return
+}
+
+function %result(i64) -> f64x4 {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    return v1
+}
+
+function %callee_param(i64) {
+    sig0 = (f64x4)
+    fn0 = %g sig0
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    call fn0(v1)
+    return
+}
+
+function %fmin(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fmin v1, v1
+    store v2, v0
+    return
+}
+
+function %fma(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fma v1, v1, v1
+    store v2, v0
+    return
+}
+
+function %fcmp_one(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fcmp one v1, v1
+    store v2, v0
+    return
+}
+
+function %iadd(i64) {
+block0(v0: i64):
+    v1 = load.i64x4 v0
+    v2 = iadd v1, v1
+    store v2, v0
+    return
+}
+
+function %f32x8(i64) {
+block0(v0: i64):
+    v1 = load.f32x8 v0
+    store v1, v0
+    return
+}
+
+function %big_endian(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 big v0
+    store v1, v0
+    return
+}
+
+function %bitcast_i8x32(i64) {
+block0(v0: i64):
+    v4 = load.i64x4 v0
+    v5 = bitcast.f64x4 little v4
+    v6 = bitcast.i8x32 little v5
+    store v6, v0
+    return
+}

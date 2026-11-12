@@ -1,0 +1,265 @@
+test compile precise-output
+target x86_64 has_avx has_avx2 has_sse41
+
+;; System V preserves no vector register, so a 256-bit value live across a
+;; call is spilled to a 32-byte slot and reloaded whole.
+function %across_call(i64) {
+    sig0 = ()
+    fn0 = %g sig0
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fadd v1, v1
+    call fn0()
+    v3 = fadd v2, v1
+    store v3, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x50, %rsp
+;   movq %r12, 0x40(%rsp)
+; block0:
+;   vmovupd (%rdi), %ymm5
+;   movq %rdi, %r12
+;   vaddpd %ymm5, %ymm5, %ymm6
+;   vmovupd %ymm6, <offset:1>+(%rsp)
+;   vmovupd %ymm5, <offset:1>+0x20(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   vmovupd <offset:1>+0x20(%rsp), %ymm0
+;   vmovupd <offset:1>+(%rsp), %ymm5
+;   vaddpd %ymm0, %ymm5, %ymm6
+;   movq %r12, %rdi
+;   vmovupd %ymm6, (%rdi)
+;   movq 0x40(%rsp), %r12
+;   addq $0x50, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x50, %rsp
+;   movq %r12, 0x40(%rsp)
+; block1: ; offset 0xd
+;   vmovupd (%rdi), %ymm5 ; trap: heap_oob
+;   movq %rdi, %r12
+;   vaddpd %ymm5, %ymm5, %ymm6
+;   vmovupd %ymm6, (%rsp)
+;   vmovupd %ymm5, 0x20(%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   vzeroupper
+;   callq *%rsi
+;   vmovupd 0x20(%rsp), %ymm0
+;   vmovupd (%rsp), %ymm5
+;   vaddpd %ymm0, %ymm5, %ymm6
+;   movq %r12, %rdi
+;   vmovupd %ymm6, (%rdi) ; trap: heap_oob
+;   movq 0x40(%rsp), %r12
+;   addq $0x50, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+;; Seventeen live values exceed the sixteen vector registers.
+function %pressure(i64) {
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = load.f64x4 v0+32
+    v3 = load.f64x4 v0+64
+    v4 = load.f64x4 v0+96
+    v5 = load.f64x4 v0+128
+    v6 = load.f64x4 v0+160
+    v7 = load.f64x4 v0+192
+    v8 = load.f64x4 v0+224
+    v9 = load.f64x4 v0+256
+    v10 = load.f64x4 v0+288
+    v11 = load.f64x4 v0+320
+    v12 = load.f64x4 v0+352
+    v13 = load.f64x4 v0+384
+    v14 = load.f64x4 v0+416
+    v15 = load.f64x4 v0+448
+    v16 = load.f64x4 v0+480
+    v17 = load.f64x4 v0+512
+    store v17, v0
+    store v16, v0+32
+    store v15, v0+64
+    store v14, v0+96
+    store v13, v0+128
+    store v12, v0+160
+    store v11, v0+192
+    store v10, v0+224
+    store v9, v0+256
+    store v8, v0+288
+    store v7, v0+320
+    store v6, v0+352
+    store v5, v0+384
+    store v4, v0+416
+    store v3, v0+448
+    store v2, v0+480
+    store v1, v0+512
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block0:
+;   vmovupd (%rdi), %ymm1
+;   vmovupd %ymm1, <offset:1>+(%rsp)
+;   vmovupd 0x20(%rdi), %ymm1
+;   vmovupd 0x40(%rdi), %ymm2
+;   vmovupd 0x60(%rdi), %ymm3
+;   vmovupd 0x80(%rdi), %ymm4
+;   vmovupd 0xa0(%rdi), %ymm5
+;   vmovupd 0xc0(%rdi), %ymm6
+;   vmovupd 0xe0(%rdi), %ymm7
+;   vmovupd 0x100(%rdi), %ymm8
+;   vmovupd 0x120(%rdi), %ymm9
+;   vmovupd 0x140(%rdi), %ymm10
+;   vmovupd 0x160(%rdi), %ymm11
+;   vmovupd 0x180(%rdi), %ymm12
+;   vmovupd 0x1a0(%rdi), %ymm13
+;   vmovupd 0x1c0(%rdi), %ymm14
+;   vmovupd 0x1e0(%rdi), %ymm15
+;   vmovupd 0x200(%rdi), %ymm0
+;   vmovupd %ymm0, (%rdi)
+;   vmovupd %ymm15, 0x20(%rdi)
+;   vmovupd %ymm14, 0x40(%rdi)
+;   vmovupd %ymm13, 0x60(%rdi)
+;   vmovupd %ymm12, 0x80(%rdi)
+;   vmovupd %ymm11, 0xa0(%rdi)
+;   vmovupd %ymm10, 0xc0(%rdi)
+;   vmovupd %ymm9, 0xe0(%rdi)
+;   vmovupd %ymm8, 0x100(%rdi)
+;   vmovupd %ymm7, 0x120(%rdi)
+;   vmovupd %ymm6, 0x140(%rdi)
+;   vmovupd %ymm5, 0x160(%rdi)
+;   vmovupd %ymm4, 0x180(%rdi)
+;   vmovupd %ymm3, 0x1a0(%rdi)
+;   vmovupd %ymm2, 0x1c0(%rdi)
+;   vmovupd %ymm1, 0x1e0(%rdi)
+;   vmovupd <offset:1>+(%rsp), %ymm1
+;   vmovupd %ymm1, 0x200(%rdi)
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block1: ; offset 0x8
+;   vmovupd (%rdi), %ymm1 ; trap: heap_oob
+;   vmovupd %ymm1, (%rsp)
+;   vmovupd 0x20(%rdi), %ymm1 ; trap: heap_oob
+;   vmovupd 0x40(%rdi), %ymm2 ; trap: heap_oob
+;   vmovupd 0x60(%rdi), %ymm3 ; trap: heap_oob
+;   vmovupd 0x80(%rdi), %ymm4 ; trap: heap_oob
+;   vmovupd 0xa0(%rdi), %ymm5 ; trap: heap_oob
+;   vmovupd 0xc0(%rdi), %ymm6 ; trap: heap_oob
+;   vmovupd 0xe0(%rdi), %ymm7 ; trap: heap_oob
+;   vmovupd 0x100(%rdi), %ymm8 ; trap: heap_oob
+;   vmovupd 0x120(%rdi), %ymm9 ; trap: heap_oob
+;   vmovupd 0x140(%rdi), %ymm10 ; trap: heap_oob
+;   vmovupd 0x160(%rdi), %ymm11 ; trap: heap_oob
+;   vmovupd 0x180(%rdi), %ymm12 ; trap: heap_oob
+;   vmovupd 0x1a0(%rdi), %ymm13 ; trap: heap_oob
+;   vmovupd 0x1c0(%rdi), %ymm14 ; trap: heap_oob
+;   vmovupd 0x1e0(%rdi), %ymm15 ; trap: heap_oob
+;   vmovupd 0x200(%rdi), %ymm0 ; trap: heap_oob
+;   vmovupd %ymm0, (%rdi) ; trap: heap_oob
+;   vmovupd %ymm15, 0x20(%rdi) ; trap: heap_oob
+;   vmovupd %ymm14, 0x40(%rdi) ; trap: heap_oob
+;   vmovupd %ymm13, 0x60(%rdi) ; trap: heap_oob
+;   vmovupd %ymm12, 0x80(%rdi) ; trap: heap_oob
+;   vmovupd %ymm11, 0xa0(%rdi) ; trap: heap_oob
+;   vmovupd %ymm10, 0xc0(%rdi) ; trap: heap_oob
+;   vmovupd %ymm9, 0xe0(%rdi) ; trap: heap_oob
+;   vmovupd %ymm8, 0x100(%rdi) ; trap: heap_oob
+;   vmovupd %ymm7, 0x120(%rdi) ; trap: heap_oob
+;   vmovupd %ymm6, 0x140(%rdi) ; trap: heap_oob
+;   vmovupd %ymm5, 0x160(%rdi) ; trap: heap_oob
+;   vmovupd %ymm4, 0x180(%rdi) ; trap: heap_oob
+;   vmovupd %ymm3, 0x1a0(%rdi) ; trap: heap_oob
+;   vmovupd %ymm2, 0x1c0(%rdi) ; trap: heap_oob
+;   vmovupd %ymm1, 0x1e0(%rdi) ; trap: heap_oob
+;   vmovupd (%rsp), %ymm1
+;   vmovupd %ymm1, 0x200(%rdi) ; trap: heap_oob
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
+;; Block parameters: moves between 256-bit values in a loop.
+function %loop_swap(i64, i64) {
+block0(v0: i64, v1: i64):
+    v2 = load.f64x4 v0
+    v3 = load.f64x4 v0+32
+    jump block1(v1, v2, v3)
+
+block1(v4: i64, v5: f64x4, v6: f64x4):
+    v7 = fadd v5, v6
+    v9 = iconst.i64 1
+    v8 = isub v4, v9
+    brif v8, block1(v8, v6, v7), block2
+
+block2:
+    store v5, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm4
+;   vmovupd 0x20(%rdi), %ymm6
+;   jmp     label1
+; block1:
+;   vaddpd %ymm6, %ymm4, %ymm0
+;   subq $0x1, %rsi
+;   testq %rsi, %rsi
+;   jnz     label2; j label3
+; block2:
+;   vmovapd %ymm6, %ymm4
+;   vmovapd %ymm0, %ymm6
+;   jmp     label1
+; block3:
+;   vmovupd %ymm4, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm4 ; trap: heap_oob
+;   vmovupd 0x20(%rdi), %ymm6 ; trap: heap_oob
+; block2: ; offset 0xd
+;   vaddpd %ymm6, %ymm4, %ymm0
+;   subq $1, %rsi
+;   testq %rsi, %rsi
+;   je 0x2b
+; block3: ; offset 0x1e
+;   vmovapd %ymm6, %ymm4
+;   vmovapd %ymm0, %ymm6
+;   jmp 0xd
+; block4: ; offset 0x2b
+;   vmovupd %ymm4, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+

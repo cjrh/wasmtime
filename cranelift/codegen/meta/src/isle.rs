@@ -203,6 +203,7 @@ pub fn get_isle_compilations(
                     vec![
                         src_isa_x64.join("inst.isle"),
                         src_isa_x64.join("lower.isle"),
+                        src_isa_x64.join("lower_ymm.isle"),
                     ],
                 ]
                 .concat(),

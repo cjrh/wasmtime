@@ -16,6 +16,11 @@ pub struct EmitState {
     /// A copy of the frame layout, used during the emission of `Inst::ReturnCallKnown` and
     /// `Inst::ReturnCallUnknown` instructions and exception callsites.
     pub frame_layout: FrameLayout,
+
+    /// Whether the function uses 256-bit vectors, and so must clear the upper
+    /// halves of the vector registers before each call and return; see
+    /// `isa/x64/ymm.rs`.
+    pub clear_upper_vectors: bool,
 }
 
 impl MachInstEmitState<Inst> for EmitState {
@@ -24,6 +29,7 @@ impl MachInstEmitState<Inst> for EmitState {
             user_stack_map: None,
             ctrl_plane,
             frame_layout: abi.frame_layout().clone(),
+            clear_upper_vectors: abi.uses_wide_float_regs(),
         }
     }
 

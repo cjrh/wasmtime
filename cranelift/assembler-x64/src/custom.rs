@@ -343,6 +343,26 @@ pub mod display {
         vcmppd_b("pd", xmm_m128, "x");
     }
 
+    /// The 256-bit `vcmppd`; as `vcmp!`, but with YMM operand names.
+    pub fn vcmppd_y<R: Registers>(f: &mut fmt::Formatter, inst: &inst::vcmppd_y<R>) -> fmt::Result {
+        let ymm1 = inst.ymm1.to_ymm_string();
+        let ymm2 = inst.ymm2.to_ymm_string();
+        let op = if f.alternate() {
+            inst.ymm_m256.to_ymm_string_xed()
+        } else {
+            inst.ymm_m256.to_ymm_string()
+        };
+        let pred = inst.imm8.value();
+        if f.alternate() || pred > 0x1f {
+            let m = marker(f, &inst.ymm_m256, "y");
+            let imm8 = inst.imm8.to_string();
+            write!(f, "vcmppd{m} {imm8}, {op}, {ymm2}, {ymm1}")
+        } else {
+            let p = vex_pred_as_str(pred);
+            write!(f, "vcmp{p}pd {op}, {ymm2}, {ymm1}")
+        }
+    }
+
     pub fn nop_1b(f: &mut fmt::Formatter, _: &inst::nop_1b) -> fmt::Result {
         write!(f, "nop")
     }

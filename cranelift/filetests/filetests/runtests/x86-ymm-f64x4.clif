@@ -1,0 +1,653 @@
+test run
+target x86_64 has_avx has_avx2 has_sse41
+set regalloc_algorithm=single_pass
+target x86_64 has_avx has_avx2 has_sse41
+
+; 256-bit vectors cannot be passed or returned, so each test builds them from
+; scalars and returns one lane.
+
+function %build(f64, f64, f64, f64) -> f64x2, f64x2 {
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = extractlane v7, 0
+    v9 = extractlane v7, 1
+    v10 = extractlane v7, 2
+    v11 = extractlane v7, 3
+    v90 = scalar_to_vector.f64x2 v8
+    v91 = insertlane v90, v9, 1
+    v92 = scalar_to_vector.f64x2 v10
+    v93 = insertlane v92, v11, 1
+    return v91, v93
+}
+; run: %build(0x1.0, 0x2.0, 0x3.0, 0x4.0) == [[0x1.0 0x2.0], [0x3.0 0x4.0]]
+; run: %build(-0x0.0, +Inf, -Inf, +NaN:0x1234) == [[-0x0.0 +Inf], [-Inf +NaN:0x1234]]
+
+function %arith(f64, f64, f64, f64) -> f64x2, f64x2 {
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = fadd v7, v7
+    v9 = fmul v8, v7
+    v10 = fsub v9, v7
+    v11 = fdiv v10, v8
+    v12 = sqrt v11
+    v13 = extractlane v12, 0
+    v14 = extractlane v12, 1
+    v15 = extractlane v12, 2
+    v16 = extractlane v12, 3
+    v90 = scalar_to_vector.f64x2 v13
+    v91 = insertlane v90, v14, 1
+    v92 = scalar_to_vector.f64x2 v15
+    v93 = insertlane v92, v16, 1
+    return v91, v93
+}
+; (2x*x - x) / 2x = x - 0.5, then sqrt.
+; The x86 default NaN has the sign bit set.
+; run: %arith(0x4.8, 0x1.0, -0x1.0, +Inf) == [[0x2.0 0x1.6a09e667f3bcdp-1], [-NaN -NaN]]
+
+function %memory(f64, f64, f64, f64) -> f64, f64x2 {
+    ss0 = explicit_slot 32
+    ss1 = explicit_slot 32
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = stack_addr.i64 ss0
+    store v7, v8
+    v9 = load.f64x4 v8
+    v10 = fadd v9, v9
+    v11 = stack_addr.i64 ss1
+    store v10, v11
+    v12 = load.f64 v11+24
+    v13 = load.f64x2 v11
+    return v12, v13
+}
+; run: %memory(0x1.0, 0x2.0, 0x3.0, 0x4.0) == [0x8.0, [0x2.0 0x4.0]]
+
+function %halves(f64, f64, f64, f64) -> f64x2, f64x2 {
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = x86_vextractf128.f64x2 v7, 0
+    v9 = x86_vextractf128.f64x2 v7, 1
+    return v8, v9
+}
+; run: %halves(0x1.0, 0x2.0, 0x3.0, 0x4.0) == [[0x1.0 0x2.0], [0x3.0 0x4.0]]
+
+function %swap_halves(f64, f64, f64, f64) -> f64, f64 {
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = x86_vextractf128.f64x2 v7, 0
+    v9 = x86_vextractf128.f64x2 v7, 1
+    v10 = x86_vinsertf128.f64x4 v9, v8
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 3
+    return v11, v12
+}
+; run: %swap_halves(0x1.0, 0x2.0, 0x3.0, 0x4.0) == [0x3.0, 0x2.0]
+
+function %concat(f64x2, f64x2) -> f64x2, f64x2 {
+block0(v0: f64x2, v1: f64x2):
+    v2 = x86_vinsertf128.f64x4 v0, v1
+    v3 = extractlane v2, 0
+    v4 = extractlane v2, 1
+    v5 = extractlane v2, 2
+    v6 = extractlane v2, 3
+    v90 = scalar_to_vector.f64x2 v3
+    v91 = insertlane v90, v4, 1
+    v92 = scalar_to_vector.f64x2 v5
+    v93 = insertlane v92, v6, 1
+    return v91, v93
+}
+; run: %concat([0x1.0 0x2.0], [0x3.0 0x4.0]) == [[0x1.0 0x2.0], [0x3.0 0x4.0]]
+
+function %select_lt(f64, f64, f64, f64) -> f64x2, f64x2 {
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = f64const 0x2.0
+    v9 = splat.f64x4 v8
+    v10 = fcmp lt v7, v9
+    v11 = bitcast.f64x4 v10
+    v12 = bitselect v11, v7, v9
+    v13 = extractlane v12, 0
+    v14 = extractlane v12, 1
+    v15 = extractlane v12, 2
+    v16 = extractlane v12, 3
+    v90 = scalar_to_vector.f64x2 v13
+    v91 = insertlane v90, v14, 1
+    v92 = scalar_to_vector.f64x2 v15
+    v93 = insertlane v92, v16, 1
+    return v91, v93
+}
+; min(x, 2) with NaN taking 2.
+; run: %select_lt(0x1.0, 0x3.0, +NaN, -Inf) == [[0x1.0 0x2.0], [0x2.0 -Inf]]
+
+; Lane i of the mask sets bit i of the result. With a = [1, NaN, 2, 3] and
+; b = [2, 2, 2, NaN], the lanes are less, unordered, equal and unordered.
+
+function %fcmp_eq() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp eq v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_eq() == 4
+
+function %fcmp_ne() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp ne v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_ne() == 11
+
+function %fcmp_lt() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp lt v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_lt() == 1
+
+function %fcmp_le() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp le v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_le() == 5
+
+function %fcmp_gt() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp gt v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_gt() == 0
+
+function %fcmp_ge() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp ge v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_ge() == 4
+
+function %fcmp_ord() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp ord v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_ord() == 5
+
+function %fcmp_uno() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp uno v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_uno() == 10
+
+function %fcmp_ult() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp ult v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_ult() == 11
+
+function %fcmp_ule() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp ule v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_ule() == 15
+
+function %fcmp_ugt() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp ugt v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_ugt() == 10
+
+function %fcmp_uge() -> i64 {
+block0:
+    v0 = f64const 0x1.0
+    v1 = f64const +NaN
+    v2 = f64const 0x2.0
+    v3 = f64const 0x3.0
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = splat.f64x4 v2
+    v9 = insertlane v8, v1, 3
+    v10 = fcmp uge v7, v9
+    v11 = extractlane v10, 0
+    v12 = extractlane v10, 1
+    v13 = extractlane v10, 2
+    v14 = extractlane v10, 3
+    v15 = iconst.i64 1
+    v16 = band v11, v15
+    v17 = band v12, v15
+    v18 = band v13, v15
+    v19 = band v14, v15
+    v26 = iconst.i64 1
+    v27 = iconst.i64 2
+    v28 = iconst.i64 3
+    v20 = ishl v17, v26
+    v21 = ishl v18, v27
+    v22 = ishl v19, v28
+    v23 = bor v16, v20
+    v24 = bor v21, v22
+    v25 = bor v23, v24
+    return v25
+}
+; run: %fcmp_uge() == 14
+
+; Integer lanes: splat, insertlane, bitwise operations and bnot.
+function %int_ops(i64, i64) -> i64, i64 {
+block0(v0: i64, v1: i64):
+    v2 = splat.i64x4 v0
+    v3 = insertlane v2, v1, 3
+    v4 = splat.i64x4 v1
+    v5 = band v3, v4
+    v6 = bor v3, v4
+    v7 = bxor v3, v4
+    v8 = bnot v3
+    v30 = bnot v4
+    v9 = band v3, v30
+    v10 = extractlane v5, 0
+    v11 = extractlane v6, 1
+    v12 = bxor v7, v8
+    v13 = extractlane v12, 2
+    v14 = extractlane v9, 3
+    v15 = extractlane v8, 3
+    v16 = iadd v14, v15
+    return v10, v11
+}
+; run: %int_ops(0xf0, 0x3c) == [0x30, 0xfc]
+
+function %int_ops_not(i64, i64) -> i64, i64 {
+block0(v0: i64, v1: i64):
+    v2 = splat.i64x4 v0
+    v3 = insertlane v2, v1, 3
+    v4 = splat.i64x4 v1
+    v5 = band v3, v4
+    v6 = bor v3, v4
+    v7 = bxor v3, v4
+    v8 = bnot v3
+    v30 = bnot v4
+    v9 = band v3, v30
+    v10 = extractlane v5, 0
+    v11 = extractlane v6, 1
+    v12 = bxor v7, v8
+    v13 = extractlane v12, 2
+    v14 = extractlane v9, 3
+    v15 = extractlane v8, 3
+    v16 = iadd v14, v15
+    return v13, v16
+}
+; (0xf0 ^ 0x3c) ^ ~0xf0 = ~0x3c; (0x3c & ~0x3c) + ~0x3c = ~0x3c.
+; run: %int_ops_not(0xf0, 0x3c) == [0xffffffffffffffc3, 0xffffffffffffffc3]
+
+function %constant() -> f64, f64 {
+block0:
+    v0 = vconst.f64x4 [0x1.0 0x2.0 0x3.0 -0x0.0]
+    v1 = fadd v0, v0
+    v2 = extractlane v1, 1
+    v3 = extractlane v1, 3
+    return v2, v3
+}
+; run: %constant() == [0x4.0, -0x0.0]
+
+; Writes every vector register with 128-bit (legacy SSE and VEX.128) and
+; 256-bit values.
+function %clobber(f64) -> f64 {
+    ss0 = explicit_slot 32
+block0(v0: f64):
+    v1 = splat.f64x2 v0
+    v2 = fadd v1, v1
+    v3 = fmul v2, v1
+    v4 = fsub v3, v2
+    v5 = splat.f64x4 v0
+    v6 = fadd v5, v5
+    v7 = stack_addr.i64 ss0
+    store v6, v7
+    v8 = load.f64 v7+8
+    v9 = extractlane v4, 1
+    v10 = fadd v8, v9
+    return v10
+}
+
+function %across_call(f64, f64, f64, f64) -> f64x2, f64x2 {
+    fn0 = %clobber(f64) -> f64
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = fadd v7, v7
+    v9 = call fn0(v0)
+    v10 = splat.f64x4 v9
+    v11 = fadd v8, v10
+    v12 = x86_vextractf128.f64x2 v11, 0
+    v13 = x86_vextractf128.f64x2 v11, 1
+    return v12, v13
+}
+; clobber(1) = 2 + (2 - 2) = 2, so the result is 2x + 2.
+; run: %across_call(0x1.0, 0x2.0, 0x3.0, 0x4.0) == [[0x4.0 0x6.0], [0x8.0 0xa.0]]

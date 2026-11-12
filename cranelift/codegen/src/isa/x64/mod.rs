@@ -26,6 +26,7 @@ mod abi;
 mod inst;
 mod lower;
 pub mod settings;
+mod ymm;
 
 #[cfg(feature = "unwind")]
 pub use inst::unwind::systemv::create_cie;
@@ -91,6 +92,7 @@ impl TargetIsa for X64Backend {
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
+        ymm::check_function(func, &self.x64_flags)?;
         let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
 
         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;

@@ -31,6 +31,14 @@ impl<R: AsReg> Xmm<R> {
         self.0.to_string(None)
     }
 
+    /// Return the register name as a 256-bit YMM register (`%ymmN`).
+    ///
+    /// The YMM register shares the XMM encoding; a virtual register prints
+    /// unchanged.
+    pub fn to_ymm_string(&self) -> String {
+        to_ymm(self.0.to_string(None))
+    }
+
     /// Emit this register as the `r/m` field of a ModR/M byte.
     pub(crate) fn encode_modrm(&self, sink: &mut impl CodeSink, enc_reg: u8) {
         sink.put1(encode_modrm(0b11, enc_reg & 0b111, self.enc() & 0b111));
@@ -63,6 +71,14 @@ impl<R: AsReg> AsMut<R> for Xmm<R> {
 impl<R: AsReg> From<R> for Xmm<R> {
     fn from(reg: R) -> Xmm<R> {
         Xmm(reg)
+    }
+}
+
+/// Rename a printed `%xmmN` register to `%ymmN`.
+pub(crate) fn to_ymm(name: String) -> String {
+    match name.strip_prefix("%xmm") {
+        Some(n) => alloc::format!("%ymm{n}"),
+        None => name,
     }
 }
 

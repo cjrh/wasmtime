@@ -159,6 +159,27 @@ fn emit_reloc(sink: &mut MachBuffer<Inst>, kind: Reloc, name: &ExternalName, add
 ///
 /// * there's a shorter encoding for shl/shr/sar by a 1-bit immediate.  (Do we
 ///   care?)
+/// Whether `inst` transfers control out of the function, to a callee or the
+/// caller: where a function using 256-bit vectors executes `vzeroupper`
+/// (`isa/x64/ymm.rs`).
+fn leaves_function(inst: &Inst) -> bool {
+    match inst {
+        Inst::CallKnown { .. }
+        | Inst::CallUnknown { .. }
+        | Inst::ReturnCallKnown { .. }
+        | Inst::ReturnCallUnknown { .. }
+        | Inst::StackSwitchBasic { .. }
+        | Inst::ElfTlsGetAddr { .. }
+        | Inst::MachOTlsGetAddr { .. }
+        | Inst::CoffTlsGetAddr { .. } => true,
+        Inst::External { inst } => matches!(
+            inst,
+            asm::inst::Inst::retq_zo(_) | asm::inst::Inst::retq_i(_)
+        ),
+        _ => false,
+    }
+}
+
 pub(crate) fn emit(
     inst: &Inst,
     sink: &mut MachBuffer<Inst>,
@@ -174,6 +195,12 @@ pub(crate) fn emit(
         panic!(
             "Cannot emit inst '{inst:?}' for target; failed to match ISA requirements: {features}"
         );
+    }
+
+    if state.clear_upper_vectors && leaves_function(inst) {
+        // `vzeroupper` (VEX.128.0F.WIG 77). The assembler's VEX encoder takes at
+        // least two operands, so its fixed bytes are written directly.
+        sink.put_data(&[0xC5, 0xF8, 0x77]);
     }
 
     match inst {

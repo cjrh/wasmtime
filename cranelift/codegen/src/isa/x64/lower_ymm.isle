@@ -1,0 +1,160 @@
+;; 256-bit lowering for `F64X4` and `I64X4` (fork-only).
+;;
+;; Every rule here has priority 100, above the generic `multi_lane` rules in
+;; `lower.isle`: those also match a 256-bit type and would emit a 128-bit
+;; instruction for it. `ymm::check_function` admits a function that uses these
+;; types only with AVX2 and only for the operations lowered here, so no other
+;; rule sees a 256-bit value.
+
+(extern const $F64X4 Type)
+(extern const $I64X4 Type)
+
+;; A 256-bit register or memory operand, as `XmmMem128` is for 128 bits.
+(type XmmMem256 extern (enum))
+
+(decl put_in_xmm_mem_256 (Value) XmmMem256)
+(extern constructor put_in_xmm_mem_256 put_in_xmm_mem_256)
+(decl xmm_to_xmm_mem_256 (Xmm) XmmMem256)
+(extern constructor xmm_to_xmm_mem_256 xmm_to_xmm_mem_256)
+(decl writable_xmm_to_xmm_mem_256 (WritableXmm) XmmMem256)
+(extern constructor writable_xmm_to_xmm_mem_256 writable_xmm_to_xmm_mem_256)
+(decl synthetic_amode_to_xmm_mem_256 (SyntheticAmode) XmmMem256)
+(extern constructor synthetic_amode_to_xmm_mem_256 synthetic_amode_to_xmm_mem_256)
+(decl const_to_xmm_mem_256 (VCodeConstant) XmmMem256)
+(extern constructor const_to_xmm_mem_256 const_to_xmm_mem_256)
+
+(convert Value XmmMem256 put_in_xmm_mem_256)
+(convert Xmm XmmMem256 xmm_to_xmm_mem_256)
+(convert WritableXmm XmmMem256 writable_xmm_to_xmm_mem_256)
+(convert SyntheticAmode XmmMem256 synthetic_amode_to_xmm_mem_256)
+
+;; Loads, stores and constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (load (multi_lane 64 4) (little_or_native_endian flags) address offset))
+      (x64_vmovupd_ya (to_amode flags address offset)))
+
+(rule 100 (lower (store (little_or_native_endian flags)
+                        value @ (value_type (multi_lane 64 4))
+                        address
+                        offset))
+      (side_effect (x64_vmovupd_yb_mem (to_amode flags address offset) value)))
+
+(rule 100 (lower (vconst (multi_lane 64 4) const))
+      (x64_vmovupd_ya (const_to_xmm_mem_256 (const_to_vconst const))))
+
+;; Arithmetic ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (fadd $F64X4 x y)) (x64_vaddpd_y x y))
+(rule 100 (lower (fsub $F64X4 x y)) (x64_vsubpd_y x y))
+(rule 100 (lower (fmul $F64X4 x y)) (x64_vmulpd_y x y))
+(rule 100 (lower (fdiv $F64X4 x y)) (x64_vdivpd_y x y))
+(rule 100 (lower (sqrt $F64X4 x)) (x64_vsqrtpd_y x))
+
+;; Comparisons ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; The predicates and operand swaps of the 128-bit `x64_cmpp` rules. As there,
+;; `OrderedNotEqual` and `UnorderedOrEqual` have no rule; `check_function`
+;; rejects them.
+
+(decl vcmppd_y (Value Value FcmpImm) Xmm)
+(rule (vcmppd_y a b imm) (x64_vcmppd_y a b (encode_fcmp_imm imm)))
+
+(rule 100 (lower (fcmp _ (FloatCC.Equal) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.Equal)))
+(rule 100 (lower (fcmp _ (FloatCC.NotEqual) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.NotEqual)))
+(rule 100 (lower (fcmp _ (FloatCC.LessThan) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.LessThan)))
+(rule 100 (lower (fcmp _ (FloatCC.LessThanOrEqual) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.LessThanOrEqual)))
+(rule 100 (lower (fcmp _ (FloatCC.Ordered) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.Ordered)))
+(rule 100 (lower (fcmp _ (FloatCC.Unordered) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.Unordered)))
+(rule 100 (lower (fcmp _ (FloatCC.UnorderedOrGreaterThan) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.UnorderedOrGreaterThan)))
+(rule 100 (lower (fcmp _ (FloatCC.UnorderedOrGreaterThanOrEqual) a @ (value_type $F64X4) b))
+      (vcmppd_y a b (FcmpImm.UnorderedOrGreaterThanOrEqual)))
+(rule 100 (lower (fcmp _ (FloatCC.GreaterThan) a @ (value_type $F64X4) b))
+      (vcmppd_y b a (FcmpImm.LessThan)))
+(rule 100 (lower (fcmp _ (FloatCC.GreaterThanOrEqual) a @ (value_type $F64X4) b))
+      (vcmppd_y b a (FcmpImm.LessThanOrEqual)))
+(rule 100 (lower (fcmp _ (FloatCC.UnorderedOrLessThan) a @ (value_type $F64X4) b))
+      (vcmppd_y b a (FcmpImm.UnorderedOrGreaterThan)))
+(rule 100 (lower (fcmp _ (FloatCC.UnorderedOrLessThanOrEqual) a @ (value_type $F64X4) b))
+      (vcmppd_y b a (FcmpImm.UnorderedOrGreaterThanOrEqual)))
+
+;; Bitwise operations ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; The bit patterns are the same for both lane types, so the `pd` forms serve
+;; `I64X4` as well.
+
+(rule 100 (lower (band (multi_lane 64 4) x y)) (x64_vandpd_y x y))
+(rule 101 (lower (band (multi_lane 64 4) x (bnot _ y))) (x64_vandnpd_y y x))
+(rule 102 (lower (band (multi_lane 64 4) (bnot _ y) x)) (x64_vandnpd_y y x))
+(rule 100 (lower (bor (multi_lane 64 4) x y)) (x64_vorpd_y x y))
+(rule 100 (lower (bxor (multi_lane 64 4) x y)) (x64_vxorpd_y x y))
+
+;; Predicate 15 (`TRUE_UQ`) sets every bit, whatever `x` holds.
+(rule 100 (lower (bnot (multi_lane 64 4) x))
+      (let ((x Xmm x))
+        (x64_vxorpd_y x (x64_vcmppd_y x x 15))))
+
+(rule 100 (lower (bitselect (multi_lane 64 4) c x y))
+      (let ((c Xmm c))
+        (x64_vorpd_y (x64_vandpd_y c x) (x64_vandnpd_y c y))))
+
+;; Both 256-bit types live in one register, so a bitcast between them is a
+;; no-op. `check_function` admits no other 256-bit bitcast.
+(rule 100 (lower (bitcast (multi_lane 64 4) _ x @ (value_type (multi_lane 64 4))))
+      x)
+
+;; Lanes ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule 100 (lower (splat $F64X4 x)) (x64_vbroadcastsd_y x))
+(rule 100 (lower (splat $I64X4 x)) (x64_vpbroadcastq_y (x64_movq_to_xmm x)))
+
+;; Broadcast the lane value, then blend it into lane `n`.
+(decl ymm_lane_value (Type Value) Xmm)
+(rule (ymm_lane_value $F64X4 x) (x64_vbroadcastsd_y x))
+(rule (ymm_lane_value $I64X4 x) (x64_vpbroadcastq_y (x64_movq_to_xmm x)))
+
+(decl ymm_lane_bit (u8) u8)
+(rule (ymm_lane_bit 0) 1)
+(rule (ymm_lane_bit 1) 2)
+(rule (ymm_lane_bit 2) 4)
+(rule (ymm_lane_bit 3) 8)
+
+(rule 100 (lower (insertlane ty @ (multi_lane 64 4) vec val (u8_from_uimm8 n)))
+      (x64_vblendpd_y vec (ymm_lane_value ty val) (ymm_lane_bit n)))
+
+;; The 128-bit half holding lane `n`, and the lane's index within it.
+(decl ymm_half (Value u8) Xmm)
+(rule (ymm_half val n) (if-let true (u8_lt n 2)) val)
+(rule 1 (ymm_half val n) (if-let false (u8_lt n 2)) (x64_vextractf128_y val 1))
+
+(rule 100 (lower (extractlane $F64 val @ (value_type $F64X4) (u8_from_uimm8 n)))
+      (if-let 0 (u8_and n 1))
+      (ymm_half val n))
+(rule 100 (lower (extractlane $F64 val @ (value_type $F64X4) (u8_from_uimm8 n)))
+      (if-let 1 (u8_and n 1))
+      (x64_pshufd (ymm_half val n) 0b11_10_11_10))
+
+(rule 100 (lower (extractlane $I64 val @ (value_type $I64X4) (u8_from_uimm8 n)))
+      (if-let 0 (u8_and n 1))
+      (x64_movq_to_gpr (ymm_half val n)))
+(rule 100 (lower (extractlane $I64 val @ (value_type $I64X4) (u8_from_uimm8 n)))
+      (if-let 1 (u8_and n 1))
+      (x64_pextrq (ymm_half val n) 1))
+
+;; Halves ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; The low half is the register itself: a 128-bit value ignores the upper
+;; bits, as `extractlane` of lane 0 relies on for a scalar.
+(rule 100 (lower (x86_vextractf128 _ val 0))
+      (let ((val Xmm val)) val))
+(rule 100 (lower (x86_vextractf128 _ val 1))
+      (x64_vextractf128_y val 1))
+
+(rule 100 (lower (x86_vinsertf128 _ lo hi))
+      (x64_vinsertf128_y lo hi 1))

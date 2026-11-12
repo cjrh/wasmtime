@@ -1,0 +1,13 @@
+test compile expect-fail
+target x86_64 has_avx has_sse41
+
+;; 256-bit vectors need AVX2 (`isa/x64/ymm.rs`), though these instructions
+;; need only AVX.
+function %add(i64, i64, i64) {
+block0(v0: i64, v1: i64, v2: i64):
+    v3 = load.f64x4 v0
+    v4 = load.f64x4 v1
+    v5 = fadd v3, v4
+    store v5, v2
+    return
+}
