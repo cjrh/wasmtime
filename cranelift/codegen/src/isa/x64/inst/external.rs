@@ -416,6 +416,65 @@ impl asm::RegisterVisitor<CraneliftRegisters> for ReloadFolder {
     }
 }
 
+/// Decides whether an instruction that defines an XMM register may leave
+/// some of the register's old bits in place. Used by
+/// [`Inst::def_keeps_bits`]; anything not known to write the whole register
+/// counts as keeping bits.
+pub(crate) struct DefKeepsBits {
+    /// The defined register.
+    pub reg: Reg,
+    /// The bytes of the register that matter: those a spill slot holds.
+    pub slot_bytes: u32,
+    /// Set when a write of `reg` may keep old bits.
+    pub keeps: bool,
+}
+
+impl DefKeepsBits {
+    fn write(&mut self, reg: &WritableXmm, keeps: bool) {
+        if keeps && reg.to_reg().to_reg() == self.reg {
+            self.keeps = true;
+        }
+    }
+}
+
+impl asm::RegisterVisitor<CraneliftRegisters> for DefKeepsBits {
+    fn read_gpr(&mut self, _: &mut Gpr) {}
+    fn read_write_gpr(&mut self, _: &mut PairedGpr) {}
+    fn write_gpr(&mut self, _: &mut WritableGpr) {}
+    fn fixed_read_gpr(&mut self, _: &mut Gpr, _: u8) {}
+    fn fixed_read_write_gpr(&mut self, _: &mut PairedGpr, _: u8) {}
+    fn fixed_write_gpr(&mut self, _: &mut WritableGpr, _: u8) {}
+    fn read_xmm(&mut self, _: &mut Xmm) {}
+    fn fixed_read_xmm(&mut self, _: &mut Xmm, _: u8) {}
+
+    // A read-write operand is a use as well, which the caller sees.
+    fn read_write_xmm(&mut self, reg: &mut PairedXmm) {
+        self.write(&reg.write, true);
+    }
+    fn fixed_read_write_xmm(&mut self, reg: &mut PairedXmm, _: u8) {
+        self.write(&reg.write, true);
+    }
+    // A VEX write: every bit up to 256 is the result or zero.
+    fn write_xmm(&mut self, reg: &mut WritableXmm) {
+        self.write(reg, false);
+    }
+    // A legacy write keeps the bits above 128, and a scalar one the bits
+    // above its result.
+    fn write_xmm_legacy(&mut self, reg: &mut WritableXmm, scalar: bool) {
+        self.write(reg, scalar || self.slot_bytes > 16);
+    }
+    fn fixed_write_xmm(&mut self, reg: &mut WritableXmm, _: u8) {
+        self.write(reg, true);
+    }
+    // The encoding and width of a register destination that could also be
+    // memory are not reported.
+    fn write_xmm_mem(&mut self, op: &mut asm::XmmMem<WritableXmm, Gpr>) {
+        if let asm::XmmMem::Xmm(reg) = op {
+            self.write(reg, true);
+        }
+    }
+}
+
 /// A helper for building a fixed register from its hardware encoding.
 fn fixed_reg(enc: u8, class: RegClass) -> Reg {
     let preg = PReg::new(usize::from(enc), class);
@@ -647,5 +706,55 @@ mod tests {
             write: wxmm500,
         };
         assert_eq!(pair.to_string(None), "(%v500 <- %v400)");
+    }
+
+    /// The destinations reload folding must treat as reads, and the EVEX
+    /// forms it must not fold.
+    #[test]
+    fn reload_fold_destinations() {
+        use crate::isa::x64::inst::regs::{xmm1, xmm2, xmm3};
+        use crate::isa::x64::inst::{Inst, asm};
+        use crate::machinst::MachInst;
+
+        let dst = || WritableXmm::from_writable_reg(Writable::from_reg(xmm1())).unwrap();
+        let src = || Xmm::new(xmm2()).unwrap();
+        let other = || Xmm::new(xmm3()).unwrap();
+        let reg = xmm1().to_real_reg().unwrap();
+        let keeps = |inst: asm::inst::Inst<super::CraneliftRegisters>, bytes| {
+            Inst::External { inst }.def_keeps_bits(reg, bytes)
+        };
+
+        // Legacy scalar forms with a write-only destination merge into it.
+        assert!(keeps(
+            asm::inst::roundsd_rmi::new(dst(), src(), 3).into(),
+            16
+        ));
+        assert!(keeps(
+            asm::inst::roundss_rmi::new(dst(), src(), 3).into(),
+            16
+        ));
+        assert!(keeps(asm::inst::rcpss_rm::new(dst(), src()).into(), 16));
+        assert!(keeps(asm::inst::rsqrtss_rm::new(dst(), src()).into(), 16));
+        // A legacy 128-bit write replaces a 16-byte slot's worth of bits but
+        // keeps the upper half of a 32-byte one.
+        assert!(!keeps(asm::inst::movaps_a::new(dst(), src()).into(), 16));
+        assert!(keeps(asm::inst::movaps_a::new(dst(), src()).into(), 32));
+        // VEX forms zero everything above their result.
+        let vex: asm::inst::Inst<_> =
+            asm::inst::vroundsd_rvmi::new(dst(), other(), src(), 3).into();
+        assert!(!keeps(vex.clone(), 16));
+        assert!(!keeps(vex, 32));
+
+        // A reload of the source register folds into the VEX form of
+        // `vpabsd` and not into the EVEX one.
+        let source = xmm2().to_real_reg().unwrap();
+        let mut vex = Inst::External {
+            inst: asm::inst::vpabsd_a::new(dst(), src()).into(),
+        };
+        assert!(vex.fold_reload(source, 16, 16, true, false));
+        let mut evex = Inst::External {
+            inst: asm::inst::vpabsd_c::new(dst(), src()).into(),
+        };
+        assert!(!evex.fold_reload(source, 16, 16, true, false));
     }
 }

@@ -238,8 +238,31 @@ impl dsl::Inst {
                         fmtln!(f, "visitor.fixed_{mutability}_{reg_lower}(&mut self.{loc}.0, enc);");
                     }
                     Reg(loc) => {
-                        let reg_lower = reg.unwrap().to_string().to_lowercase();
-                        fmtln!(f, "visitor.{mutability}_{reg_lower}(self.{loc}.as_mut());");
+                        let reg = reg.unwrap();
+                        let reg_lower = reg.to_string().to_lowercase();
+                        // A legacy SSE instruction leaves the bits of its
+                        // destination above 128 unchanged, and a scalar one
+                        // with a register source also leaves the bits above
+                        // its result (`roundsd`, `rcpss`). Both are declared
+                        // write-only; report them apart so a visitor can
+                        // tell a full write from one that keeps old bits.
+                        let legacy_write = matches!(reg, dsl::RegClass::Xmm)
+                            && matches!(o.mutability, dsl::Mutability::Write)
+                            && matches!(self.encoding, dsl::Encoding::Rex(_));
+                        if legacy_write {
+                            let scalar = (self.mnemonic.ends_with("ss")
+                                || self.mnemonic.ends_with("sd"))
+                                && self.format.operands.iter().any(|other| {
+                                    matches!(other.location.kind(), RegMem(_))
+                                        && matches!(
+                                            other.location.reg_class(),
+                                            Some(dsl::RegClass::Xmm)
+                                        )
+                                });
+                            fmtln!(f, "visitor.write_xmm_legacy(self.{loc}.as_mut(), {scalar});");
+                        } else {
+                            fmtln!(f, "visitor.{mutability}_{reg_lower}(self.{loc}.as_mut());");
+                        }
                     }
                     RegMem(loc) => {
                         let reg = reg.unwrap();
@@ -250,13 +273,17 @@ impl dsl::Inst {
                         // folded into it. `insertps` is the exception: its
                         // immediate selects a source lane of a register and
                         // ignores that selection for memory.
+                        //
+                        // EVEX forms are left out: their compressed
+                        // displacements are not exercised with spill slots.
                         let foldable = matches!(reg, dsl::RegClass::Xmm)
                             && matches!(o.mutability, dsl::Mutability::Read)
+                            && !matches!(self.encoding, dsl::Encoding::Evex(_))
                             && !self.mnemonic.ends_with("insertps");
                         if foldable {
                             let bytes = o.location.bits() / 8;
                             // Legacy SSE memory operands of 16 bytes fault
-                            // when unaligned; VEX and EVEX ones do not.
+                            // when unaligned; VEX ones do not.
                             let align = o.align
                                 || (matches!(self.encoding, dsl::Encoding::Rex(_)) && bytes >= 16);
                             fmtln!(f, "visitor.read_xmm_mem_foldable(&mut self.{loc}, {bytes}, {align});");

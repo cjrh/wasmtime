@@ -121,9 +121,9 @@ block2(v1: i64):
 ;   movq %r15, 0x30(%rsp)
 ; block0:
 ;   movq %rdi, <offset:1>+(%rsp)
-;   movq %rdi, %rcx
-;   movq %rdi, %rdx
-;   movq %rdi, %rsi
+;   movq <offset:1>+(%rsp), %rcx
+;   movq <offset:1>+(%rsp), %rdx
+;   movq <offset:1>+(%rsp), %rsi
 ;   call    TestCase(%f); jmp MachLabel(1); catch [default: MachLabel(2)]
 ; block1:
 ;   movq <offset:1>+(%rsp), %rax
@@ -159,11 +159,11 @@ block2(v1: i64):
 ;   movq %r15, 0x30(%rsp)
 ; block1: ; offset 0x21
 ;   movq %rdi, (%rsp)
-;   movq %rdi, %rcx
-;   movq %rdi, %rdx
-;   movq %rdi, %rsi
-;   callq 0x33 ; reloc_external CallPCRel4 %f -4 ; patchable call: NOP out last 5 bytes
-; block2: ; offset 0x33
+;   movq (%rsp), %rcx
+;   movq (%rsp), %rdx
+;   movq (%rsp), %rsi
+;   callq 0x36 ; reloc_external CallPCRel4 %f -4 ; patchable call: NOP out last 5 bytes
+; block2: ; offset 0x36
 ;   movq (%rsp), %rax
 ;   movq 0x10(%rsp), %rbx
 ;   movq 0x18(%rsp), %r12
@@ -174,7 +174,7 @@ block2(v1: i64):
 ;   movq %rbp, %rsp
 ;   popq %rbp
 ;   retq
-; block3: ; offset 0x59
+; block3: ; offset 0x5c
 ;   movq 0x10(%rsp), %rbx
 ;   movq 0x18(%rsp), %r12
 ;   movq 0x20(%rsp), %r13

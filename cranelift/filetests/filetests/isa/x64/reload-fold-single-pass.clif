@@ -1,4 +1,7 @@
 test compile precise-output
+set regalloc_fold_reloads=true
+set regalloc_forward_spills=true
+set regalloc_checker=true
 set regalloc_algorithm=single_pass
 target x86_64
 

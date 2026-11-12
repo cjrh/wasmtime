@@ -398,6 +398,19 @@ pub trait ABIMachineSpec {
     /// Returns required stack alignment in bytes.
     fn stack_align(call_conv: isa::CallConv) -> u32;
 
+    /// Whether the address `offset` bytes above the start of the fixed
+    /// frame storage (where [`FrameLayout::spillslot_offset`] measures from)
+    /// is known to be a multiple of 16 while the function body runs. This
+    /// holds only if the calling convention fixes the stack pointer's
+    /// alignment at entry; `false` is always a correct answer.
+    fn frame_offset_aligned_16(
+        _call_conv: isa::CallConv,
+        _frame_layout: &FrameLayout,
+        _offset: i64,
+    ) -> bool {
+        false
+    }
+
     /// Process a list of parameters or return values and allocate them to registers
     /// and stack slots.
     ///
@@ -2473,6 +2486,12 @@ impl<M: ABIMachineSpec> Callee<M> {
     /// Get the spill slot offset relative to the fixed allocation area start.
     pub fn get_spillslot_offset(&self, slot: SpillSlot) -> i64 {
         self.frame_layout().spillslot_offset(slot)
+    }
+
+    /// Whether the spill slot's address is known to be a multiple of 16.
+    pub fn spillslot_aligned_16(&self, slot: SpillSlot) -> bool {
+        let layout = self.frame_layout();
+        M::frame_offset_aligned_16(self.call_conv, layout, layout.spillslot_offset(slot))
     }
 
     /// Generate a spill.

@@ -90,6 +90,36 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         16
     }
 
+    fn frame_offset_aligned_16(
+        call_conv: isa::CallConv,
+        frame_layout: &FrameLayout,
+        offset: i64,
+    ) -> bool {
+        // These conventions enter a function with `rsp + 8` a multiple of
+        // 16: a caller aligns `rsp` to 16 and the call pushes the return
+        // address. The prologue pushes `rbp` and copies `rsp` to it, so
+        // `rbp` is a multiple of 16. The fixed frame storage starts
+        // `clobber_size + fixed_frame_storage_size` below `rbp`, and both
+        // sizes are multiples of 16. A function that makes tail calls with
+        // more stack arguments than it received first lowers `rsp` by the
+        // difference. Other conventions (`winch`,
+        // `probestack`, `preserve_all`, `cold`, `patchable`) are not relied
+        // on.
+        let aligned_entry = matches!(
+            call_conv,
+            isa::CallConv::SystemV
+                | isa::CallConv::WindowsFastcall
+                | isa::CallConv::Fast
+                | isa::CallConv::Tail
+        );
+        aligned_entry
+            && frame_layout.setup_area_size == 16
+            && (frame_layout.tail_args_size - frame_layout.incoming_args_size) % 16 == 0
+            && frame_layout.clobber_size % 16 == 0
+            && frame_layout.fixed_frame_storage_size % 16 == 0
+            && offset % 16 == 0
+    }
+
     fn compute_arg_locs(
         call_conv: isa::CallConv,
         flags: &settings::Flags,

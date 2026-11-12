@@ -1484,6 +1484,7 @@ impl MachInst for Inst {
         reg: RealReg,
         slot_offset: i64,
         slot_bytes: u32,
+        slot_aligned: bool,
         apply: bool,
     ) -> bool {
         // Only instructions of the assembler crate describe their operands
@@ -1501,11 +1502,9 @@ impl MachInst for Inst {
             reg: Reg::from(reg),
             slot_offset: slot_offset_i32,
             slot_bytes,
-            // The frame pointer is 16-byte aligned in a function entered
-            // under its calling convention, and the spill area starts
-            // below it by the clobber and fixed frame sizes, which are
-            // multiples of 16, less `slot_offset`.
-            slot_aligned: slot_offset % 16 == 0,
+            // A legacy SSE packed operand faults on an address that is not
+            // a multiple of 16; see `frame_offset_aligned_16`.
+            slot_aligned,
             apply: false,
             foldable_reads: 0,
             other_reads: 0,
@@ -1519,6 +1518,31 @@ impl MachInst for Inst {
             inst.visit(&mut folder);
         }
         true
+    }
+
+    fn def_keeps_bits(&self, reg: RealReg, slot_bytes: u32) -> bool {
+        if reg.class() != RegClass::Float {
+            // Not asked about by reload folding: only XMM reloads fold.
+            return true;
+        }
+        let inst = match self {
+            Inst::External { inst } => inst,
+            // A call defines its return registers and nothing else: the
+            // calling conventions leave the bits above a returned value
+            // unspecified, so no code may depend on a callee keeping them.
+            Inst::CallKnown { .. } | Inst::CallUnknown { .. } => return false,
+            // Other instructions are not described precisely enough.
+            _ => return true,
+        };
+        let mut visitor = external::DefKeepsBits {
+            reg: Reg::from(reg),
+            slot_bytes,
+            keeps: false,
+        };
+        // `visit` takes the instruction mutably to rewrite registers; this
+        // visitor only reads them.
+        inst.clone().visit(&mut visitor);
+        visitor.keeps
     }
 
     fn folds_reloads() -> bool {

@@ -390,9 +390,10 @@ pub trait MachInst: Clone + Debug {
     /// Returns whether this instruction reads `reg` exactly once, through an
     /// operand that can instead read the same bytes from the spill slot at
     /// `slot_offset` (as [`FrameLayout::spillslot_offset`] gives it), which
-    /// holds the low `slot_bytes` bytes of the register. With `apply` set and
-    /// a `true` result, that operand is rewritten to address the slot, so
-    /// the instruction no longer reads `reg`. The caller ensures the slot
+    /// holds the low `slot_bytes` bytes of the register. `slot_aligned` says
+    /// the slot's address is known to be a multiple of 16. With `apply` set
+    /// and a `true` result, that operand is rewritten to address the slot,
+    /// so the instruction no longer reads `reg`. The caller ensures the slot
     /// holds the value at this instruction and that `reg` is not read again
     /// before it is next written.
     fn fold_reload(
@@ -400,12 +401,25 @@ pub trait MachInst: Clone + Debug {
         _reg: RealReg,
         _slot_offset: i64,
         _slot_bytes: u32,
+        _slot_aligned: bool,
         _apply: bool,
     ) -> bool {
         false
     }
 
-    /// Whether [`MachInst::fold_reload`] can ever return `true`.
+    /// Whether this instruction, which defines `reg`, may leave some of the
+    /// register's low `slot_bytes` bytes as they were, so that the register's
+    /// new contents depend on its old ones although the operand is a def. A
+    /// scalar SSE result that keeps the destination's upper bits is one.
+    /// `true` is always a correct answer.
+    fn def_keeps_bits(&self, _reg: RealReg, _slot_bytes: u32) -> bool {
+        true
+    }
+
+    /// Whether the reload rewrites of `VCode::emit` apply to this backend:
+    /// [`MachInst::fold_reload`] can return `true`, and no instruction
+    /// writes an allocatable register without declaring it as a def or a
+    /// clobber.
     fn folds_reloads() -> bool {
         false
     }

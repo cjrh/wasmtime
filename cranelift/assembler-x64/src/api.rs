@@ -249,6 +249,15 @@ pub trait RegisterVisitor<R: Registers> {
         self.read_xmm_mem(op);
     }
 
+    /// Handle a write-only XMM operand of a legacy SSE instruction, which
+    /// leaves the register's bits above 128 unchanged. With `scalar` set the
+    /// instruction also leaves the bits above its scalar result unchanged,
+    /// so the register's new value depends on its old one.
+    fn write_xmm_legacy(&mut self, reg: &mut R::WriteXmm, scalar: bool) {
+        let _ = scalar;
+        self.write_xmm(reg);
+    }
+
     /// Helper method to handle a write [`XmmMem`] operand.
     fn write_xmm_mem(&mut self, op: &mut XmmMem<R::WriteXmm, R::ReadGpr>) {
         match op {

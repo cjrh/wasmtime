@@ -30,6 +30,37 @@ pub(crate) fn define() -> SettingGroup {
         false,
     );
 
+    settings.add_bool(
+        "regalloc_fold_reloads",
+        "Fold reloads of spilled values into memory operands after register allocation.",
+        r#"
+            A reload whose register is read once, by an operand that can read the
+            spill slot directly, and is overwritten in the same block before any
+            other read is dropped, and the instruction reads the slot. Only
+            backends that implement `MachInst::fold_reload` are affected
+            (x86-64, for read-only XMM operands). Off by default: the rewrite
+            runs after the register allocator and its checker, and a packed SSE
+            fold relies on the stack alignment of the calling convention.
+            With `regalloc_checker` enabled, each rewritten block is validated
+            against the allocator's output.
+        "#,
+        false,
+    );
+
+    settings.add_bool(
+        "regalloc_forward_spills",
+        "Replace a reload of a spill slot by a copy from a register that still holds its value.",
+        r#"
+            When an earlier move in the same block stored a register to a spill
+            slot and the register has not been written since, a reload of that
+            slot becomes a register copy, or nothing for the same register.
+            Applies to every register class on backends that opt in through
+            `MachInst::folds_reloads` (x86-64). Off by default, for the reasons
+            given for `regalloc_fold_reloads`.
+        "#,
+        false,
+    );
+
     settings.add_enum(
         "regalloc_algorithm",
         "Algorithm to use in register allocator.",
