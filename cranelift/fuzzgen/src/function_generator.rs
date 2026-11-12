@@ -856,6 +856,7 @@ static OPCODE_SIGNATURES: LazyLock<Vec<OpcodeSignature>> = LazyLock::new(|| {
                 (Opcode::ScalarToVector),
                 (Opcode::X86Pmaddubsw),
                 (Opcode::X86Cvtt2dq),
+                (Opcode::X86Rsqrtps),
                 (Opcode::Umulhi, &[I128, I128], &[I128]),
                 (Opcode::Smulhi, &[I128, I128], &[I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/6073

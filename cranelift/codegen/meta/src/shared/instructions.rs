@@ -3203,6 +3203,22 @@ pub(crate) fn define(
         .operands_out(&[Operand::new("a", IntTo)]),
     );
 
+    ig.push(
+        Inst::new(
+            "x86_rsqrtps",
+            r#"
+        An estimate of the reciprocal square root of each lane of an `f32x4`,
+        with the semantics of `rsqrtps` on x86: the relative error is at most
+        `1.5 * 2^-12`, and the exact result depends on the processor. A zero
+        lane gives an infinity of the same sign, positive infinity gives zero,
+        and a negative or NaN lane gives NaN.
+        "#,
+            &formats.unary,
+        )
+        .operands_in(&[Operand::new("x", Float)])
+        .operands_out(&[Operand::new("a", Float)]),
+    );
+
     let Int = &TypeVar::new(
         "Int",
         "A scalar or vector integer type",

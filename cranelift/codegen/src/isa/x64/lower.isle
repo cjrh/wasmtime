@@ -3992,6 +3992,11 @@
 (rule (lower (x86_cvtt2dq $I32X4 val @ (value_type $F32X4)))
       (x64_cvttps2dq val))
 
+;; Rules for `x86_rsqrtps` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (x86_rsqrtps $F32X4 val))
+      (x64_rsqrtps val))
+
 ;; Rules for `iadd_pairwise` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (rule (lower (iadd_pairwise $I8X16 x y))

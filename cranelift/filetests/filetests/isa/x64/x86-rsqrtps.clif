@@ -1,0 +1,59 @@
+test compile precise-output
+target x86_64
+
+function %rsqrt(f32x4) -> f32x4 {
+block0(v0: f32x4):
+    v1 = x86_rsqrtps v0
+    return v1
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   rsqrtps %xmm0, %xmm0
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   rsqrtps %xmm0, %xmm0
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %rsqrt_of_narrowed(f64x2) -> f64x2 {
+block0(v0: f64x2):
+    v1 = fvdemote v0
+    v2 = x86_rsqrtps v1
+    v3 = fvpromote_low v2
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   cvtpd2ps %xmm0, %xmm4
+;   rsqrtps %xmm4, %xmm4
+;   cvtps2pd %xmm4, %xmm0
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   cvtpd2ps %xmm0, %xmm4
+;   rsqrtps %xmm4, %xmm4
+;   cvtps2pd %xmm4, %xmm0
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
