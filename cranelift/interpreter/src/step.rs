@@ -1312,6 +1312,8 @@ where
         Opcode::X86Pmaddubsw => unimplemented!("X86Pmaddubsw"),
         Opcode::X86Cvtt2dq => unimplemented!("X86Cvtt2dq"),
         Opcode::X86Rsqrtps => unimplemented!("X86Rsqrtps"),
+        Opcode::X86Vextractf128 => unimplemented!("X86Vextractf128"),
+        Opcode::X86Vinsertf128 => unimplemented!("X86Vinsertf128"),
         Opcode::StackSwitch => unimplemented!("StackSwitch"),
 
         Opcode::TryCall => unimplemented!("TryCall"),

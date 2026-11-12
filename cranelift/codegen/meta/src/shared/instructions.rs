@@ -3219,6 +3219,64 @@ pub(crate) fn define(
         .operands_out(&[Operand::new("a", Float)]),
     );
 
+    let Wide = &TypeVar::new(
+        "Wide",
+        "A 256-bit vector of four 64-bit lanes",
+        TypeSetBuilder::new()
+            .ints(64..64)
+            .floats(64..64)
+            .simd_lanes(4..4)
+            .build(),
+    );
+    // `x86_vinsertf128` takes two independent free type variables, since a
+    // non-controlling type variable can be used only once; the x64 backend
+    // checks that both match the result's lane type.
+    let half = |name: &str| {
+        TypeVar::new(
+            name,
+            "A 128-bit vector of two 64-bit lanes",
+            TypeSetBuilder::new()
+                .ints(64..64)
+                .floats(64..64)
+                .simd_lanes(2..2)
+                .build(),
+        )
+    };
+    let HalfLo = &half("HalfLo");
+    let HalfHi = &half("HalfHi");
+
+    ig.push(
+        Inst::new(
+            "x86_vextractf128",
+            r#"
+        Extract half ``Idx`` (0 for lanes 0 and 1, 1 for lanes 2 and 3) of a
+        256-bit vector, with the semantics of `vextractf128` on x86. The
+        result has the input's lane type; the x64 backend checks this.
+        "#,
+            &formats.binary_imm8,
+        )
+        .operands_in(&[
+            Operand::new("x", Wide),
+            Operand::new("Idx", &imm.uimm8).with_doc("Half index: 0 or 1"),
+        ])
+        .operands_out(&[Operand::new("a", HalfLo)]),
+    );
+
+    ig.push(
+        Inst::new(
+            "x86_vinsertf128",
+            r#"
+        Concatenate two 128-bit vectors into a 256-bit vector: lanes 0 and 1
+        come from ``x`` and lanes 2 and 3 from ``y``, as `vinsertf128` of ``y``
+        into the upper half of ``x`` on x86. Both inputs have the result's
+        lane type; the x64 backend checks this.
+        "#,
+            &formats.binary,
+        )
+        .operands_in(&[Operand::new("x", HalfLo), Operand::new("y", HalfHi)])
+        .operands_out(&[Operand::new("a", Wide)]),
+    );
+
     let Int = &TypeVar::new(
         "Int",
         "A scalar or vector integer type",
