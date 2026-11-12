@@ -384,6 +384,32 @@ pub trait MachInst: Clone + Debug {
     /// never required may leave this at zero.
     fn worst_case_island_growth() -> CodeOffset;
 
+    /// Fold a reload of a spilled value into this instruction, whose
+    /// operands hold their allocated registers.
+    ///
+    /// Returns whether this instruction reads `reg` exactly once, through an
+    /// operand that can instead read the same bytes from the spill slot at
+    /// `slot_offset` (as [`FrameLayout::spillslot_offset`] gives it), which
+    /// holds the low `slot_bytes` bytes of the register. With `apply` set and
+    /// a `true` result, that operand is rewritten to address the slot, so
+    /// the instruction no longer reads `reg`. The caller ensures the slot
+    /// holds the value at this instruction and that `reg` is not read again
+    /// before it is next written.
+    fn fold_reload(
+        &mut self,
+        _reg: RealReg,
+        _slot_offset: i64,
+        _slot_bytes: u32,
+        _apply: bool,
+    ) -> bool {
+        false
+    }
+
+    /// Whether [`MachInst::fold_reload`] can ever return `true`.
+    fn folds_reloads() -> bool {
+        false
+    }
+
     /// Is this a safepoint?
     fn is_safepoint(&self) -> bool;
 

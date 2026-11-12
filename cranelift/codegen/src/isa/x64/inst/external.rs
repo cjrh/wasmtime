@@ -329,6 +329,93 @@ impl<'a, T: OperandVisitor> asm::RegisterVisitor<CraneliftRegisters> for Regallo
     }
 }
 
+/// Folds a reload of a spilled XMM value into the one operand that reads it.
+///
+/// Visits an instruction whose registers are all allocated and counts the
+/// reads of `reg`. The reload can be folded when `reg` is read exactly once,
+/// by a read-only register-or-memory operand that reads the same bytes from
+/// the spill slot as from the register; with `apply` set, that operand
+/// becomes the slot's address. Used by [`Inst::fold_reload`].
+pub(crate) struct ReloadFolder {
+    /// The register the reload writes.
+    pub reg: Reg,
+    /// The spill slot's offset from the stack pointer, less the outgoing
+    /// argument area, as in `SyntheticAmode::SlotOffset`.
+    pub slot_offset: i32,
+    /// The bytes of the register the slot holds.
+    pub slot_bytes: u32,
+    /// Whether the slot's address is 16-byte aligned.
+    pub slot_aligned: bool,
+    /// Replace the operand rather than only count it.
+    pub apply: bool,
+    /// Operands that could read the slot in place of `reg`.
+    pub foldable_reads: u32,
+    /// All other reads of `reg`.
+    pub other_reads: u32,
+}
+
+impl ReloadFolder {
+    /// Whether the visited instruction can read the slot in place of `reg`.
+    pub(crate) fn can_fold(&self) -> bool {
+        self.foldable_reads == 1 && self.other_reads == 0
+    }
+
+    fn read(&mut self, reg: &Xmm) {
+        if reg.to_reg() == self.reg {
+            self.other_reads += 1;
+        }
+    }
+}
+
+impl asm::RegisterVisitor<CraneliftRegisters> for ReloadFolder {
+    // `reg` is an XMM register, so no general-purpose operand reads it.
+    fn read_gpr(&mut self, _: &mut Gpr) {}
+    fn read_write_gpr(&mut self, _: &mut PairedGpr) {}
+    fn write_gpr(&mut self, _: &mut WritableGpr) {}
+    fn fixed_read_gpr(&mut self, _: &mut Gpr, _: u8) {}
+    fn fixed_read_write_gpr(&mut self, _: &mut PairedGpr, _: u8) {}
+    fn fixed_write_gpr(&mut self, _: &mut WritableGpr, _: u8) {}
+
+    fn read_xmm(&mut self, reg: &mut Xmm) {
+        self.read(reg);
+    }
+    fn read_write_xmm(&mut self, reg: &mut PairedXmm) {
+        self.read(&reg.read);
+    }
+    fn write_xmm(&mut self, _: &mut WritableXmm) {}
+    fn fixed_read_xmm(&mut self, reg: &mut Xmm, _: u8) {
+        self.read(reg);
+    }
+    fn fixed_read_write_xmm(&mut self, reg: &mut PairedXmm, _: u8) {
+        self.read(&reg.read);
+    }
+    fn fixed_write_xmm(&mut self, _: &mut WritableXmm, _: u8) {}
+
+    fn read_xmm_mem_foldable(&mut self, op: &mut asm::XmmMem<Xmm, Gpr>, bytes: u8, align: bool) {
+        let asm::XmmMem::Xmm(reg) = op else {
+            return;
+        };
+        if reg.to_reg() != self.reg {
+            return;
+        }
+        if u32::from(bytes) > self.slot_bytes || (align && !self.slot_aligned) {
+            self.other_reads += 1;
+            return;
+        }
+        self.foldable_reads += 1;
+        if self.apply {
+            *op = asm::XmmMem::Mem(asm::Amode::ImmReg {
+                base: Gpr::RSP,
+                simm32: asm::AmodeOffsetPlusKnownOffset {
+                    simm32: self.slot_offset.into(),
+                    offset: Some(offsets::KEY_SLOT_OFFSET),
+                },
+                trap: None,
+            });
+        }
+    }
+}
+
 /// A helper for building a fixed register from its hardware encoding.
 fn fixed_reg(enc: u8, class: RegClass) -> Reg {
     let preg = PReg::new(usize::from(enc), class);

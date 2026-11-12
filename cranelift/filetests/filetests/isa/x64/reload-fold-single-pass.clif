@@ -1,0 +1,99 @@
+test compile precise-output
+set regalloc_algorithm=single_pass
+target x86_64
+
+;; The single-pass allocator stores a value to its slot and reloads it into
+;; the same register, which still holds it: the reload is dropped. The other
+;; reload folds into `addsd`.
+function %same_register(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x30, %rsp
+;   movq %r15, 0x20(%rsp)
+; block0:
+;   movdqu %xmm1, <offset:1>+0x10(%rsp)
+;   load_ext_name %g+0, %r15
+;   call    *%r15
+;   movdqu %xmm0, <offset:1>+(%rsp)
+;   addsd <offset:1>+0x10(%rsp), %xmm0
+;   movq 0x20(%rsp), %r15
+;   addq $0x30, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x30, %rsp
+;   movq %r15, 0x20(%rsp)
+; block1: ; offset 0xd
+;   movdqu %xmm1, 0x10(%rsp)
+;   movabsq $0, %r15 ; reloc_external Abs8 %g 0
+;   callq *%r15
+;   movdqu %xmm0, (%rsp)
+;   addsd 0x10(%rsp), %xmm0
+;   movq 0x20(%rsp), %r15
+;   addq $0x30, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The reload of a value another register still holds becomes a copy from
+;; that register.
+function %other_register(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    v4 = fmul v2, v3
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x30, %rsp
+;   movq %r15, 0x20(%rsp)
+; block0:
+;   movdqu %xmm1, <offset:1>+0x10(%rsp)
+;   load_ext_name %g+0, %r15
+;   call    *%r15
+;   movdqu %xmm0, <offset:1>+(%rsp)
+;   movdqa %xmm0, %xmm15
+;   addsd <offset:1>+0x10(%rsp), %xmm15
+;   mulsd %xmm15, %xmm0
+;   movq 0x20(%rsp), %r15
+;   addq $0x30, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x30, %rsp
+;   movq %r15, 0x20(%rsp)
+; block1: ; offset 0xd
+;   movdqu %xmm1, 0x10(%rsp)
+;   movabsq $0, %r15 ; reloc_external Abs8 %g 0
+;   callq *%r15
+;   movdqu %xmm0, (%rsp)
+;   movdqa %xmm0, %xmm15
+;   addsd 0x10(%rsp), %xmm15
+;   mulsd %xmm15, %xmm0
+;   movq 0x20(%rsp), %r15
+;   addq $0x30, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq

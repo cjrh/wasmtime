@@ -374,15 +374,12 @@ block0(v0: i64):
 ;   movsd 0x80(%rcx), %xmm7
 ;   movsd 0x88(%rcx), %xmm11
 ;   movsd 0x90(%rcx), %xmm13
-;   movdqu <offset:1>+0x30(%rsp), %xmm3
-;   addsd %xmm3, %xmm0
+;   addsd <offset:1>+0x30(%rsp), %xmm0
 ;   movdqa %xmm12, %xmm3
 ;   movdqu <offset:1>+(%rsp), %xmm12
 ;   addsd %xmm3, %xmm12
-;   movdqu <offset:1>+0x20(%rsp), %xmm3
-;   addsd %xmm3, %xmm1
-;   movdqu <offset:1>+0x10(%rsp), %xmm3
-;   addsd %xmm3, %xmm4
+;   addsd <offset:1>+0x20(%rsp), %xmm1
+;   addsd <offset:1>+0x10(%rsp), %xmm4
 ;   addsd %xmm14, %xmm2
 ;   addsd %xmm15, %xmm6
 ;   addsd %xmm8, %xmm5
@@ -453,15 +450,12 @@ block0(v0: i64):
 ;   movsd 0x80(%rcx), %xmm7 ; trap: heap_oob
 ;   movsd 0x88(%rcx), %xmm11 ; trap: heap_oob
 ;   movsd 0x90(%rcx), %xmm13 ; trap: heap_oob
-;   movdqu 0x30(%rsp), %xmm3
-;   addsd %xmm3, %xmm0
+;   addsd 0x30(%rsp), %xmm0
 ;   movdqa %xmm12, %xmm3
 ;   movdqu (%rsp), %xmm12
 ;   addsd %xmm3, %xmm12
-;   movdqu 0x20(%rsp), %xmm3
-;   addsd %xmm3, %xmm1
-;   movdqu 0x10(%rsp), %xmm3
-;   addsd %xmm3, %xmm4
+;   addsd 0x20(%rsp), %xmm1
+;   addsd 0x10(%rsp), %xmm4
 ;   addsd %xmm14, %xmm2
 ;   addsd %xmm15, %xmm6
 ;   addsd %xmm8, %xmm5

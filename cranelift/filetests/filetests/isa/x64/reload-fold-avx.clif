@@ -1,0 +1,226 @@
+test compile precise-output
+target x86_64 has_avx has_avx2 has_sse41
+
+function %scalar(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   vaddsd <offset:1>+(%rsp), %xmm0, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   vaddsd (%rsp), %xmm0, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A VEX memory operand needs no alignment, so the fold does not depend on
+;; where the 8-byte stack slot puts the spill slot.
+function %vector_unaligned(f64x2, f64x2) -> f64x2 {
+    ss0 = explicit_slot 8
+    fn0 = %g(f64x2) -> f64x2
+block0(v0: f64x2, v1: f64x2):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+8(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   vaddpd <offset:1>+8(%rsp), %xmm0, %xmm0
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, 8(%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   vaddpd 8(%rsp), %xmm0, %xmm0
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The reloaded value is the first source, which takes no memory: the reload
+;; stays.
+function %modified(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fsub v1, v2
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqu <offset:1>+(%rsp), %xmm1
+;   vsubsd %xmm0, %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqu (%rsp), %xmm1
+;   vsubsd %xmm0, %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; `vinsertps` differs between a register and a memory source as `insertps`
+;; does.
+function %insertps(f32x4, f32x4) -> f32x4 {
+    fn0 = %g(f32x4) -> f32x4
+block0(v0: f32x4, v1: f32x4):
+    v2 = call fn0(v0)
+    v3 = extractlane v1, 0
+    v4 = insertlane v2, v3, 1
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqu <offset:1>+(%rsp), %xmm1
+;   vinsertps $0x10, %xmm1, %xmm0, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqu (%rsp), %xmm1
+;   vinsertps $0x10, %xmm1, %xmm0, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A function with a 256-bit value spills every vector register 32 bytes
+;; wide, so a 256-bit operand reads the whole slot.
+function %ymm(i64) {
+    sig0 = ()
+    fn0 = %g sig0
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = fadd v1, v1
+    call fn0()
+    v3 = fadd v2, v1
+    store v3, v0
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x50, %rsp
+;   movq %r12, 0x40(%rsp)
+; block0:
+;   vmovupd (%rdi), %ymm5
+;   movq %rdi, %r12
+;   vaddpd %ymm5, %ymm5, %ymm6
+;   vmovupd %ymm6, <offset:1>+(%rsp)
+;   vmovupd %ymm5, <offset:1>+0x20(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   vmovupd <offset:1>+(%rsp), %ymm5
+;   vaddpd <offset:1>+0x20(%rsp), %ymm5, %ymm6
+;   movq %r12, %rdi
+;   vmovupd %ymm6, (%rdi)
+;   movq 0x40(%rsp), %r12
+;   addq $0x50, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x50, %rsp
+;   movq %r12, 0x40(%rsp)
+; block1: ; offset 0xd
+;   vmovupd (%rdi), %ymm5 ; trap: heap_oob
+;   movq %rdi, %r12
+;   vaddpd %ymm5, %ymm5, %ymm6
+;   vmovupd %ymm6, (%rsp)
+;   vmovupd %ymm5, 0x20(%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   vzeroupper
+;   callq *%rsi
+;   vmovupd (%rsp), %ymm5
+;   vaddpd 0x20(%rsp), %ymm5, %ymm6
+;   movq %r12, %rdi
+;   vmovupd %ymm6, (%rdi) ; trap: heap_oob
+;   movq 0x40(%rsp), %r12
+;   addq $0x50, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+

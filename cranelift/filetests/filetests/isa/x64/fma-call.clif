@@ -71,31 +71,22 @@ block0(v0: f32x4, v1: f32x4, v2: f32x4):
 ;   movdqu %xmm2, <offset:1>+0x20(%rsp)
 ;   load_ext_name %FmaF32+0, %rsi
 ;   call    *%rsi
-;   movdqu <offset:1>+(%rsp), %xmm1
 ;   movdqu %xmm0, <offset:1>+0x50(%rsp)
-;   pshufd $0x1, %xmm1, %xmm0
-;   movdqu <offset:1>+0x10(%rsp), %xmm1
-;   pshufd $0x1, %xmm1, %xmm1
-;   movdqu <offset:1>+0x20(%rsp), %xmm2
-;   pshufd $0x1, %xmm2, %xmm2
+;   pshufd $0x1, <offset:1>+(%rsp), %xmm0
+;   pshufd $0x1, <offset:1>+0x10(%rsp), %xmm1
+;   pshufd $0x1, <offset:1>+0x20(%rsp), %xmm2
 ;   load_ext_name %FmaF32+0, %rax
 ;   call    *%rax
-;   movdqu <offset:1>+(%rsp), %xmm1
 ;   movdqu %xmm0, <offset:1>+0x30(%rsp)
-;   pshufd $0x2, %xmm1, %xmm0
-;   movdqu <offset:1>+0x10(%rsp), %xmm1
-;   pshufd $0x2, %xmm1, %xmm1
-;   movdqu <offset:1>+0x20(%rsp), %xmm2
-;   pshufd $0x2, %xmm2, %xmm2
+;   pshufd $0x2, <offset:1>+(%rsp), %xmm0
+;   pshufd $0x2, <offset:1>+0x10(%rsp), %xmm1
+;   pshufd $0x2, <offset:1>+0x20(%rsp), %xmm2
 ;   load_ext_name %FmaF32+0, %rax
 ;   call    *%rax
-;   movdqu <offset:1>+(%rsp), %xmm1
 ;   movdqu %xmm0, <offset:1>+0x40(%rsp)
-;   pshufd $0x3, %xmm1, %xmm0
-;   movdqu <offset:1>+0x10(%rsp), %xmm1
-;   pshufd $0x3, %xmm1, %xmm1
-;   movdqu <offset:1>+0x20(%rsp), %xmm2
-;   pshufd $0x3, %xmm2, %xmm2
+;   pshufd $0x3, <offset:1>+(%rsp), %xmm0
+;   pshufd $0x3, <offset:1>+0x10(%rsp), %xmm1
+;   pshufd $0x3, <offset:1>+0x20(%rsp), %xmm2
 ;   load_ext_name %FmaF32+0, %rax
 ;   call    *%rax
 ;   movdqa %xmm0, %xmm2
@@ -122,31 +113,22 @@ block0(v0: f32x4, v1: f32x4, v2: f32x4):
 ;   movdqu %xmm2, 0x20(%rsp)
 ;   movabsq $0, %rsi ; reloc_external Abs8 %FmaF32 0
 ;   callq *%rsi
-;   movdqu (%rsp), %xmm1
 ;   movdqu %xmm0, 0x50(%rsp)
-;   pshufd $1, %xmm1, %xmm0
-;   movdqu 0x10(%rsp), %xmm1
-;   pshufd $1, %xmm1, %xmm1
-;   movdqu 0x20(%rsp), %xmm2
-;   pshufd $1, %xmm2, %xmm2
+;   pshufd $1, (%rsp), %xmm0
+;   pshufd $1, 0x10(%rsp), %xmm1
+;   pshufd $1, 0x20(%rsp), %xmm2
 ;   movabsq $0, %rax ; reloc_external Abs8 %FmaF32 0
 ;   callq *%rax
-;   movdqu (%rsp), %xmm1
 ;   movdqu %xmm0, 0x30(%rsp)
-;   pshufd $2, %xmm1, %xmm0
-;   movdqu 0x10(%rsp), %xmm1
-;   pshufd $2, %xmm1, %xmm1
-;   movdqu 0x20(%rsp), %xmm2
-;   pshufd $2, %xmm2, %xmm2
+;   pshufd $2, (%rsp), %xmm0
+;   pshufd $2, 0x10(%rsp), %xmm1
+;   pshufd $2, 0x20(%rsp), %xmm2
 ;   movabsq $0, %rax ; reloc_external Abs8 %FmaF32 0
 ;   callq *%rax
-;   movdqu (%rsp), %xmm1
 ;   movdqu %xmm0, 0x40(%rsp)
-;   pshufd $3, %xmm1, %xmm0
-;   movdqu 0x10(%rsp), %xmm1
-;   pshufd $3, %xmm1, %xmm1
-;   movdqu 0x20(%rsp), %xmm2
-;   pshufd $3, %xmm2, %xmm2
+;   pshufd $3, (%rsp), %xmm0
+;   pshufd $3, 0x10(%rsp), %xmm1
+;   pshufd $3, 0x20(%rsp), %xmm2
 ;   movabsq $0, %rax ; reloc_external Abs8 %FmaF32 0
 ;   callq *%rax
 ;   movdqa %xmm0, %xmm2
@@ -179,12 +161,9 @@ block0(v0: f64x2, v1: f64x2, v2: f64x2):
 ;   load_ext_name %FmaF64+0, %rsi
 ;   call    *%rsi
 ;   movdqu %xmm0, <offset:1>+0x30(%rsp)
-;   movdqu <offset:1>+(%rsp), %xmm0
-;   pshufd $0xee, %xmm0, %xmm0
-;   movdqu <offset:1>+0x10(%rsp), %xmm1
-;   pshufd $0xee, %xmm1, %xmm1
-;   movdqu <offset:1>+0x20(%rsp), %xmm2
-;   pshufd $0xee, %xmm2, %xmm2
+;   pshufd $0xee, <offset:1>+(%rsp), %xmm0
+;   pshufd $0xee, <offset:1>+0x10(%rsp), %xmm1
+;   pshufd $0xee, <offset:1>+0x20(%rsp), %xmm2
 ;   load_ext_name %FmaF64+0, %rax
 ;   call    *%rax
 ;   movdqa %xmm0, %xmm1
@@ -207,12 +186,9 @@ block0(v0: f64x2, v1: f64x2, v2: f64x2):
 ;   movabsq $0, %rsi ; reloc_external Abs8 %FmaF64 0
 ;   callq *%rsi
 ;   movdqu %xmm0, 0x30(%rsp)
-;   movdqu (%rsp), %xmm0
-;   pshufd $0xee, %xmm0, %xmm0
-;   movdqu 0x10(%rsp), %xmm1
-;   pshufd $0xee, %xmm1, %xmm1
-;   movdqu 0x20(%rsp), %xmm2
-;   pshufd $0xee, %xmm2, %xmm2
+;   pshufd $0xee, (%rsp), %xmm0
+;   pshufd $0xee, 0x10(%rsp), %xmm1
+;   pshufd $0xee, 0x20(%rsp), %xmm2
 ;   movabsq $0, %rax ; reloc_external Abs8 %FmaF64 0
 ;   callq *%rax
 ;   movdqa %xmm0, %xmm1

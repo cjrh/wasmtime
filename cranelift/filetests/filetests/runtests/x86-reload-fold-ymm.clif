@@ -1,0 +1,39 @@
+test run
+target x86_64 has_avx has_avx2 has_sse41
+set regalloc_algorithm=single_pass
+target x86_64 has_avx has_avx2 has_sse41
+
+; A 256-bit value spilled across a call is read from its 32-byte slot as a
+; memory operand; the 128-bit value in the same function reads the low half
+; of its own 32-byte slot.
+
+function %nop() {
+block0:
+    return
+}
+
+function %across_call(f64, f64, f64, f64) -> f64x2, f64x2 {
+    fn0 = %nop()
+block0(v0: f64, v1: f64, v2: f64, v3: f64):
+    v4 = splat.f64x4 v0
+    v5 = insertlane v4, v1, 1
+    v6 = insertlane v5, v2, 2
+    v7 = insertlane v6, v3, 3
+    v8 = fadd v7, v7
+    v20 = splat.f64x2 v1
+    v21 = splat.f64x2 v2
+    call fn0()
+    v9 = fadd v8, v7
+    v22 = fadd v21, v20
+    v10 = extractlane v9, 0
+    v11 = extractlane v9, 1
+    v12 = extractlane v9, 2
+    v13 = extractlane v9, 3
+    v90 = scalar_to_vector.f64x2 v10
+    v91 = insertlane v90, v11, 1
+    v92 = scalar_to_vector.f64x2 v12
+    v93 = insertlane v92, v13, 1
+    v94 = fadd v93, v22
+    return v91, v94
+}
+; run: %across_call(0x1.0, 0x2.0, 0x3.0, 0x4.0) == [[0x3.0 0x6.0], [0xe.0 0x11.0]]

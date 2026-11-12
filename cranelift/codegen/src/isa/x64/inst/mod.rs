@@ -1479,6 +1479,52 @@ impl MachInst for Inst {
         0
     }
 
+    fn fold_reload(
+        &mut self,
+        reg: RealReg,
+        slot_offset: i64,
+        slot_bytes: u32,
+        apply: bool,
+    ) -> bool {
+        // Only instructions of the assembler crate describe their operands
+        // precisely enough, and only XMM operands are folded.
+        let Inst::External { inst } = self else {
+            return false;
+        };
+        if reg.class() != RegClass::Float {
+            return false;
+        }
+        let Ok(slot_offset_i32) = i32::try_from(slot_offset) else {
+            return false;
+        };
+        let mut folder = external::ReloadFolder {
+            reg: Reg::from(reg),
+            slot_offset: slot_offset_i32,
+            slot_bytes,
+            // The frame pointer is 16-byte aligned in a function entered
+            // under its calling convention, and the spill area starts
+            // below it by the clobber and fixed frame sizes, which are
+            // multiples of 16, less `slot_offset`.
+            slot_aligned: slot_offset % 16 == 0,
+            apply: false,
+            foldable_reads: 0,
+            other_reads: 0,
+        };
+        inst.visit(&mut folder);
+        if !folder.can_fold() {
+            return false;
+        }
+        if apply {
+            folder.apply = true;
+            inst.visit(&mut folder);
+        }
+        true
+    }
+
+    fn folds_reloads() -> bool {
+        true
+    }
+
     fn is_safepoint(&self) -> bool {
         match self {
             Inst::CallKnown { .. } | Inst::CallUnknown { .. } | Inst::StackSwitchBasic { .. } => {

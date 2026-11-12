@@ -1,0 +1,190 @@
+test interpret
+test run
+target x86_64
+target x86_64 has_sse41 has_avx
+set regalloc_algorithm=single_pass
+target x86_64
+target x86_64 has_sse41 has_avx
+
+; Each function keeps values across a call or holds more values than there
+; are registers, so the allocator spills and the x64 backend reads spill
+; slots as memory operands, retargets reloads and reuses stored registers.
+
+function %id(f64) -> f64 {
+block0(v0: f64):
+    return v0
+}
+
+function %id2(f64x2) -> f64x2 {
+block0(v0: f64x2):
+    return v0
+}
+
+function %scalar(f64, f64) -> f64 {
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+; run: %scalar(0x1.0, 0x2.0) == 0x3.0
+; run: %scalar(-0x1.8, +Inf) == +Inf
+
+function %vector(f64x2, f64x2) -> f64x2 {
+    fn0 = %id2(f64x2) -> f64x2
+block0(v0: f64x2, v1: f64x2):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+; run: %vector([0x1.0 0x2.0], [0x10.0 0x20.0]) == [0x11.0 0x22.0]
+
+; The 8-byte stack slot moves the spill slot off a 16-byte boundary, where a
+; legacy SSE packed operand would fault.
+function %vector_unaligned(f64x2, f64x2) -> f64x2 {
+    ss0 = explicit_slot 8
+    fn0 = %id2(f64x2) -> f64x2
+block0(v0: f64x2, v1: f64x2):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+; run: %vector_unaligned([0x1.0 0x2.0], [0x10.0 0x20.0]) == [0x11.0 0x22.0]
+
+function %scalar_unaligned(f64, f64) -> f64 {
+    ss0 = explicit_slot 8
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+; run: %scalar_unaligned(0x1.0, 0x2.0) == 0x3.0
+
+function %two_reads(f64, f64) -> f64 {
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    v4 = fmul v3, v1
+    return v4
+}
+; run: %two_reads(0x1.0, 0x2.0) == 0x6.0
+
+function %modified(f64, f64) -> f64 {
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fsub v1, v2
+    return v3
+}
+; run: %modified(0x1.0, 0x4.0) == 0x3.0
+
+; The value read from the slot is used again after the call's result.
+function %reused(f64, f64) -> f64 {
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    v4 = fmul v2, v3
+    return v4
+}
+; run: %reused(0x2.0, 0x3.0) == 0xa.0
+
+function %live_out(f64, f64, i32) -> f64 {
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64, v2: i32):
+    v3 = call fn0(v0)
+    v4 = fadd v3, v1
+    brif v2, block1, block2
+
+block1:
+    v5 = fmul v4, v1
+    return v5
+
+block2:
+    return v4
+}
+; run: %live_out(0x1.0, 0x2.0, 1) == 0x6.0
+; run: %live_out(0x1.0, 0x2.0, 0) == 0x3.0
+
+; A loop that spills across its call and reads the slots every iteration.
+function %loop(f64, f64, i32) -> f64 {
+    fn0 = %id(f64) -> f64
+block0(v0: f64, v1: f64, v2: i32):
+    jump block1(v0, v2)
+
+block1(v3: f64, v4: i32):
+    v5 = call fn0(v3)
+    v6 = fadd v5, v1
+    v7 = fmul v6, v0
+    v9 = iconst.i32 -1
+    v8 = iadd v4, v9
+    brif v8, block1(v7, v8), block2
+
+block2:
+    return v7
+}
+; run: %loop(0x2.0, 0x1.0, 3) == 0x1e.0
+
+function %pressure(f64, f64) -> f64 {
+block0(v0: f64, v1: f64):
+    v2 = fadd v1, v1
+    v3 = fadd v2, v1
+    v4 = fadd v3, v1
+    v5 = fadd v4, v1
+    v6 = fadd v5, v1
+    v7 = fadd v6, v1
+    v8 = fadd v7, v1
+    v9 = fadd v8, v1
+    v10 = fadd v9, v1
+    v11 = fadd v10, v1
+    v12 = fadd v11, v1
+    v13 = fadd v12, v1
+    v14 = fadd v13, v1
+    v15 = fadd v14, v1
+    v16 = fadd v15, v1
+    v17 = fadd v16, v1
+    v18 = fadd v17, v1
+    v21 = fsub v0, v2
+    v22 = fsub v3, v4
+    v23 = fsub v5, v6
+    v24 = fsub v7, v8
+    v25 = fsub v9, v10
+    v26 = fsub v11, v12
+    v27 = fsub v13, v14
+    v28 = fsub v15, v16
+    v29 = fsub v17, v18
+    v31 = fmul v21, v0
+    v32 = fmul v22, v2
+    v33 = fmul v23, v3
+    v34 = fmul v24, v4
+    v35 = fmul v25, v5
+    v36 = fmul v26, v6
+    v37 = fmul v27, v7
+    v38 = fmul v28, v8
+    v39 = fmul v29, v9
+    v41 = fadd v31, v11
+    v42 = fadd v32, v12
+    v43 = fadd v33, v13
+    v44 = fadd v34, v14
+    v45 = fadd v35, v15
+    v46 = fadd v36, v16
+    v47 = fadd v37, v17
+    v48 = fadd v38, v18
+    v51 = fadd v41, v42
+    v52 = fadd v43, v44
+    v53 = fadd v45, v46
+    v54 = fadd v47, v48
+    v56 = fadd v51, v52
+    v57 = fadd v53, v54
+    v58 = fadd v56, v57
+    v59 = fadd v58, v39
+    v60 = fadd v59, v21
+    v61 = fadd v60, v22
+    v62 = fadd v61, v23
+    v63 = fadd v62, v24
+    return v63
+}
+; run: %pressure(0x1.0, 0x2.0) == 0x2c.0
+; run: %pressure(-0x3.8, 0x0.4) == 0x23.8

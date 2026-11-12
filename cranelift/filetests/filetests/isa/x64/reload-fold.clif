@@ -1,0 +1,656 @@
+test compile precise-output
+target x86_64 has_sse41
+
+;; A reload whose register is read once, by an operand that also takes
+;; memory, and is dead afterwards: the instruction reads the spill slot.
+function %scalar(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   addsd <offset:1>+(%rsp), %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   addsd (%rsp), %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A 16-byte operand of a legacy SSE instruction must be aligned. This spill
+;; slot is.
+function %vector(f64x2, f64x2) -> f64x2 {
+    fn0 = %g(f64x2) -> f64x2
+block0(v0: f64x2, v1: f64x2):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   addpd <offset:1>+(%rsp), %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   addpd (%rsp), %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The 8-byte stack slot puts the spill slot 8 bytes off a 16-byte boundary,
+;; so the reload stays.
+function %vector_unaligned(f64x2, f64x2) -> f64x2 {
+    ss0 = explicit_slot 8
+    fn0 = %g(f64x2) -> f64x2
+block0(v0: f64x2, v1: f64x2):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+8(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqu <offset:1>+8(%rsp), %xmm1
+;   addpd %xmm1, %xmm0
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, 8(%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqu 8(%rsp), %xmm1
+;   addpd %xmm1, %xmm0
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The 8-byte operand of a scalar instruction needs no alignment.
+function %scalar_unaligned(f64, f64) -> f64 {
+    ss0 = explicit_slot 8
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+8(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   addsd <offset:1>+8(%rsp), %xmm0
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, 8(%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   addsd 8(%rsp), %xmm0
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; Two reads of the reloaded register: the reload stays.
+function %two_reads(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    v4 = fmul v3, v1
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqu <offset:1>+(%rsp), %xmm1
+;   addsd %xmm1, %xmm0
+;   mulsd %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqu (%rsp), %xmm1
+;   addsd %xmm1, %xmm0
+;   mulsd %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The reloaded register is the operand an instruction modifies: the reload
+;; stays.
+function %modified(f64, f64) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fsub v1, v2
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqa %xmm0, %xmm1
+;   movdqu <offset:1>+(%rsp), %xmm0
+;   subsd %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqa %xmm0, %xmm1
+;   movdqu (%rsp), %xmm0
+;   subsd %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; `insertps` selects a source lane of a register with its immediate and
+;; ignores that selection for memory: the reload stays.
+function %insertps(f32x4, f32x4) -> f32x4 {
+    fn0 = %g(f32x4) -> f32x4
+block0(v0: f32x4, v1: f32x4):
+    v2 = call fn0(v0)
+    v3 = extractlane v1, 0
+    v4 = insertlane v2, v3, 1
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqu <offset:1>+(%rsp), %xmm1
+;   insertps $0x10, %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqu (%rsp), %xmm1
+;   insertps $0x10, %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The block does not write the reloaded register again and does not return,
+;; so the register may be read later: the reload stays.
+function %live_out(f64, f64, i32) -> f64 {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64, v2: i32):
+    v3 = call fn0(v0)
+    v4 = fadd v3, v1
+    brif v2, block1, block2
+
+block1:
+    v5 = fmul v4, v1
+    return v5
+
+block2:
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+;   movq %r12, 0x10(%rsp)
+; block0:
+;   movq %rdi, %r12
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rdi
+;   call    *%rdi
+;   movdqu <offset:1>+(%rsp), %xmm1
+;   addsd %xmm1, %xmm0
+;   movq %r12, %rdi
+;   testl %edi, %edi
+;   jnz     label2; j label1
+; block1:
+;   movq 0x10(%rsp), %r12
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   mulsd %xmm1, %xmm0
+;   movq 0x10(%rsp), %r12
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x20, %rsp
+;   movq %r12, 0x10(%rsp)
+; block1: ; offset 0xd
+;   movq %rdi, %r12
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rdi ; reloc_external Abs8 %g 0
+;   callq *%rdi
+;   movdqu (%rsp), %xmm1
+;   addsd %xmm1, %xmm0
+;   movq %r12, %rdi
+;   testl %edi, %edi
+;   jne 0x43
+; block2: ; offset 0x35
+;   movq 0x10(%rsp), %r12
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x43
+;   mulsd %xmm1, %xmm0
+;   movq 0x10(%rsp), %r12
+;   addq $0x20, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; More values than registers, without a call. Reloads fold into `subsd` and
+;; `addsd`; a stored register that was overwritten is not reused.
+function %pressure(i64) -> f64 {
+block0(v0: i64):
+    v1 = load.f64 v0
+    v2 = load.f64 v0+8
+    v3 = load.f64 v0+16
+    v4 = load.f64 v0+24
+    v5 = load.f64 v0+32
+    v6 = load.f64 v0+40
+    v7 = load.f64 v0+48
+    v8 = load.f64 v0+56
+    v9 = load.f64 v0+64
+    v10 = load.f64 v0+72
+    v11 = load.f64 v0+80
+    v12 = load.f64 v0+88
+    v13 = load.f64 v0+96
+    v14 = load.f64 v0+104
+    v15 = load.f64 v0+112
+    v16 = load.f64 v0+120
+    v17 = load.f64 v0+128
+    v18 = load.f64 v0+136
+    v21 = fsub v1, v2
+    v22 = fsub v3, v4
+    v23 = fsub v5, v6
+    v24 = fsub v7, v8
+    v25 = fsub v9, v10
+    v26 = fsub v11, v12
+    v27 = fsub v13, v14
+    v28 = fsub v15, v16
+    v29 = fsub v17, v18
+    v31 = fmul v21, v1
+    v32 = fmul v22, v2
+    v33 = fmul v23, v3
+    v34 = fmul v24, v4
+    v35 = fmul v25, v5
+    v36 = fmul v26, v6
+    v37 = fmul v27, v7
+    v38 = fmul v28, v8
+    v39 = fmul v29, v9
+    v41 = fadd v31, v11
+    v42 = fadd v32, v12
+    v43 = fadd v33, v13
+    v44 = fadd v34, v14
+    v45 = fadd v35, v15
+    v46 = fadd v36, v16
+    v47 = fadd v37, v17
+    v48 = fadd v38, v18
+    v51 = fadd v41, v42
+    v52 = fadd v43, v44
+    v53 = fadd v45, v46
+    v54 = fadd v47, v48
+    v56 = fadd v51, v52
+    v57 = fadd v53, v54
+    v58 = fadd v56, v57
+    v59 = fadd v58, v39
+    v60 = fadd v59, v21
+    v61 = fadd v60, v22
+    v62 = fadd v61, v23
+    v63 = fadd v62, v24
+    return v63
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x100, %rsp
+; block0:
+;   movsd (%rdi), %xmm7
+;   movdqa %xmm7, %xmm4
+;   movsd 8(%rdi), %xmm8
+;   movdqu %xmm8, <offset:1>+0xf0(%rsp)
+;   movsd 0x10(%rdi), %xmm9
+;   movsd 0x18(%rdi), %xmm10
+;   movsd 0x20(%rdi), %xmm11
+;   movsd 0x28(%rdi), %xmm12
+;   movsd 0x30(%rdi), %xmm13
+;   movdqu %xmm13, <offset:1>+0xe0(%rsp)
+;   movsd 0x38(%rdi), %xmm14
+;   movdqu %xmm14, <offset:1>+0xd0(%rsp)
+;   movsd 0x40(%rdi), %xmm1
+;   movdqu %xmm1, <offset:1>+0xc0(%rsp)
+;   movsd 0x48(%rdi), %xmm0
+;   movsd 0x50(%rdi), %xmm2
+;   movdqu %xmm2, <offset:1>+0xb0(%rsp)
+;   movsd 0x58(%rdi), %xmm2
+;   movdqu %xmm2, <offset:1>+0xa0(%rsp)
+;   movsd 0x60(%rdi), %xmm3
+;   movdqu %xmm3, <offset:1>+0x90(%rsp)
+;   movsd 0x68(%rdi), %xmm5
+;   movdqu %xmm5, <offset:1>+0x80(%rsp)
+;   movsd 0x70(%rdi), %xmm6
+;   movdqu %xmm6, <offset:1>+0x70(%rsp)
+;   movsd 0x78(%rdi), %xmm7
+;   movdqu %xmm7, <offset:1>+0x60(%rsp)
+;   movsd 0x80(%rdi), %xmm8
+;   movdqu %xmm8, <offset:1>+0x50(%rsp)
+;   movsd 0x88(%rdi), %xmm15
+;   movdqu <offset:1>+0xf0(%rsp), %xmm13
+;   movdqa %xmm4, %xmm14
+;   movdqu %xmm15, <offset:1>+0x40(%rsp)
+;   movdqa %xmm14, %xmm6
+;   subsd %xmm13, %xmm6
+;   movdqa %xmm9, %xmm1
+;   movdqa %xmm10, %xmm8
+;   movdqu %xmm6, <offset:1>+0x30(%rsp)
+;   movdqa %xmm1, %xmm2
+;   subsd %xmm8, %xmm2
+;   movdqa %xmm12, %xmm6
+;   movdqa %xmm11, %xmm7
+;   movdqu %xmm2, <offset:1>+0x20(%rsp)
+;   movdqa %xmm7, %xmm3
+;   subsd %xmm6, %xmm3
+;   movdqu %xmm3, <offset:1>+0x10(%rsp)
+;   movdqu <offset:1>+0xe0(%rsp), %xmm5
+;   movdqu <offset:1>+0xd0(%rsp), %xmm3
+;   movdqa %xmm5, %xmm2
+;   subsd %xmm3, %xmm2
+;   movdqu %xmm2, <offset:1>+(%rsp)
+;   movdqu <offset:1>+0xc0(%rsp), %xmm2
+;   movdqa %xmm2, %xmm4
+;   subsd %xmm0, %xmm4
+;   movdqu <offset:1>+0xb0(%rsp), %xmm0
+;   movdqa %xmm0, %xmm11
+;   subsd <offset:1>+0xa0(%rsp), %xmm11
+;   movdqu <offset:1>+0x90(%rsp), %xmm9
+;   movdqa %xmm9, %xmm10
+;   subsd <offset:1>+0x80(%rsp), %xmm10
+;   movdqu <offset:1>+0x70(%rsp), %xmm9
+;   movdqa %xmm9, %xmm12
+;   subsd <offset:1>+0x60(%rsp), %xmm12
+;   movdqu <offset:1>+0x50(%rsp), %xmm15
+;   movdqa %xmm15, %xmm9
+;   subsd <offset:1>+0x40(%rsp), %xmm9
+;   movdqu <offset:1>+0x30(%rsp), %xmm15
+;   movdqa %xmm15, %xmm0
+;   mulsd %xmm14, %xmm0
+;   movdqu <offset:1>+0x20(%rsp), %xmm15
+;   movdqa %xmm15, %xmm14
+;   mulsd %xmm13, %xmm14
+;   movdqu <offset:1>+0x10(%rsp), %xmm15
+;   movdqa %xmm15, %xmm13
+;   mulsd %xmm1, %xmm13
+;   movdqu <offset:1>+(%rsp), %xmm15
+;   movdqa %xmm15, %xmm1
+;   mulsd %xmm8, %xmm1
+;   mulsd %xmm7, %xmm4
+;   mulsd %xmm6, %xmm11
+;   mulsd %xmm5, %xmm10
+;   mulsd %xmm3, %xmm12
+;   mulsd %xmm2, %xmm9
+;   addsd <offset:1>+0xb0(%rsp), %xmm0
+;   addsd <offset:1>+0xa0(%rsp), %xmm14
+;   addsd <offset:1>+0x90(%rsp), %xmm13
+;   addsd <offset:1>+0x80(%rsp), %xmm1
+;   addsd <offset:1>+0x70(%rsp), %xmm4
+;   addsd <offset:1>+0x60(%rsp), %xmm11
+;   addsd <offset:1>+0x50(%rsp), %xmm10
+;   addsd <offset:1>+0x40(%rsp), %xmm12
+;   addsd %xmm14, %xmm0
+;   addsd %xmm1, %xmm13
+;   addsd %xmm11, %xmm4
+;   addsd %xmm12, %xmm10
+;   addsd %xmm13, %xmm0
+;   addsd %xmm10, %xmm4
+;   addsd %xmm4, %xmm0
+;   addsd %xmm9, %xmm0
+;   addsd <offset:1>+0x30(%rsp), %xmm0
+;   addsd <offset:1>+0x20(%rsp), %xmm0
+;   addsd <offset:1>+0x10(%rsp), %xmm0
+;   addsd <offset:1>+(%rsp), %xmm0
+;   addq $0x100, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x100, %rsp
+; block1: ; offset 0xb
+;   movsd (%rdi), %xmm7 ; trap: heap_oob
+;   movdqa %xmm7, %xmm4
+;   movsd 8(%rdi), %xmm8 ; trap: heap_oob
+;   movdqu %xmm8, 0xf0(%rsp)
+;   movsd 0x10(%rdi), %xmm9 ; trap: heap_oob
+;   movsd 0x18(%rdi), %xmm10 ; trap: heap_oob
+;   movsd 0x20(%rdi), %xmm11 ; trap: heap_oob
+;   movsd 0x28(%rdi), %xmm12 ; trap: heap_oob
+;   movsd 0x30(%rdi), %xmm13 ; trap: heap_oob
+;   movdqu %xmm13, 0xe0(%rsp)
+;   movsd 0x38(%rdi), %xmm14 ; trap: heap_oob
+;   movdqu %xmm14, 0xd0(%rsp)
+;   movsd 0x40(%rdi), %xmm1 ; trap: heap_oob
+;   movdqu %xmm1, 0xc0(%rsp)
+;   movsd 0x48(%rdi), %xmm0 ; trap: heap_oob
+;   movsd 0x50(%rdi), %xmm2 ; trap: heap_oob
+;   movdqu %xmm2, 0xb0(%rsp)
+;   movsd 0x58(%rdi), %xmm2 ; trap: heap_oob
+;   movdqu %xmm2, 0xa0(%rsp)
+;   movsd 0x60(%rdi), %xmm3 ; trap: heap_oob
+;   movdqu %xmm3, 0x90(%rsp)
+;   movsd 0x68(%rdi), %xmm5 ; trap: heap_oob
+;   movdqu %xmm5, 0x80(%rsp)
+;   movsd 0x70(%rdi), %xmm6 ; trap: heap_oob
+;   movdqu %xmm6, 0x70(%rsp)
+;   movsd 0x78(%rdi), %xmm7 ; trap: heap_oob
+;   movdqu %xmm7, 0x60(%rsp)
+;   movsd 0x80(%rdi), %xmm8 ; trap: heap_oob
+;   movdqu %xmm8, 0x50(%rsp)
+;   movsd 0x88(%rdi), %xmm15 ; trap: heap_oob
+;   movdqu 0xf0(%rsp), %xmm13
+;   movdqa %xmm4, %xmm14
+;   movdqu %xmm15, 0x40(%rsp)
+;   movdqa %xmm14, %xmm6
+;   subsd %xmm13, %xmm6
+;   movdqa %xmm9, %xmm1
+;   movdqa %xmm10, %xmm8
+;   movdqu %xmm6, 0x30(%rsp)
+;   movdqa %xmm1, %xmm2
+;   subsd %xmm8, %xmm2
+;   movdqa %xmm12, %xmm6
+;   movdqa %xmm11, %xmm7
+;   movdqu %xmm2, 0x20(%rsp)
+;   movdqa %xmm7, %xmm3
+;   subsd %xmm6, %xmm3
+;   movdqu %xmm3, 0x10(%rsp)
+;   movdqu 0xe0(%rsp), %xmm5
+;   movdqu 0xd0(%rsp), %xmm3
+;   movdqa %xmm5, %xmm2
+;   subsd %xmm3, %xmm2
+;   movdqu %xmm2, (%rsp)
+;   movdqu 0xc0(%rsp), %xmm2
+;   movdqa %xmm2, %xmm4
+;   subsd %xmm0, %xmm4
+;   movdqu 0xb0(%rsp), %xmm0
+;   movdqa %xmm0, %xmm11
+;   subsd 0xa0(%rsp), %xmm11
+;   movdqu 0x90(%rsp), %xmm9
+;   movdqa %xmm9, %xmm10
+;   subsd 0x80(%rsp), %xmm10
+;   movdqu 0x70(%rsp), %xmm9
+;   movdqa %xmm9, %xmm12
+;   subsd 0x60(%rsp), %xmm12
+;   movdqu 0x50(%rsp), %xmm15
+;   movdqa %xmm15, %xmm9
+;   subsd 0x40(%rsp), %xmm9
+;   movdqu 0x30(%rsp), %xmm15
+;   movdqa %xmm15, %xmm0
+;   mulsd %xmm14, %xmm0
+;   movdqu 0x20(%rsp), %xmm15
+;   movdqa %xmm15, %xmm14
+;   mulsd %xmm13, %xmm14
+;   movdqu 0x10(%rsp), %xmm15
+;   movdqa %xmm15, %xmm13
+;   mulsd %xmm1, %xmm13
+;   movdqu (%rsp), %xmm15
+;   movdqa %xmm15, %xmm1
+;   mulsd %xmm8, %xmm1
+;   mulsd %xmm7, %xmm4
+;   mulsd %xmm6, %xmm11
+;   mulsd %xmm5, %xmm10
+;   mulsd %xmm3, %xmm12
+;   mulsd %xmm2, %xmm9
+;   addsd 0xb0(%rsp), %xmm0
+;   addsd 0xa0(%rsp), %xmm14
+;   addsd 0x90(%rsp), %xmm13
+;   addsd 0x80(%rsp), %xmm1
+;   addsd 0x70(%rsp), %xmm4
+;   addsd 0x60(%rsp), %xmm11
+;   addsd 0x50(%rsp), %xmm10
+;   addsd 0x40(%rsp), %xmm12
+;   addsd %xmm14, %xmm0
+;   addsd %xmm1, %xmm13
+;   addsd %xmm11, %xmm4
+;   addsd %xmm12, %xmm10
+;   addsd %xmm13, %xmm0
+;   addsd %xmm10, %xmm4
+;   addsd %xmm4, %xmm0
+;   addsd %xmm9, %xmm0
+;   addsd 0x30(%rsp), %xmm0
+;   addsd 0x20(%rsp), %xmm0
+;   addsd 0x10(%rsp), %xmm0
+;   addsd (%rsp), %xmm0
+;   addq $0x100, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+

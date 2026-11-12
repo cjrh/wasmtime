@@ -28,9 +28,8 @@ block0(v0: i64):
 ;   vmovupd %ymm5, <offset:1>+0x20(%rsp)
 ;   load_ext_name %g+0, %rsi
 ;   call    *%rsi
-;   vmovupd <offset:1>+0x20(%rsp), %ymm0
 ;   vmovupd <offset:1>+(%rsp), %ymm5
-;   vaddpd %ymm0, %ymm5, %ymm6
+;   vaddpd <offset:1>+0x20(%rsp), %ymm5, %ymm6
 ;   movq %r12, %rdi
 ;   vmovupd %ymm6, (%rdi)
 ;   movq 0x40(%rsp), %r12
@@ -54,9 +53,8 @@ block0(v0: i64):
 ;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
 ;   vzeroupper
 ;   callq *%rsi
-;   vmovupd 0x20(%rsp), %ymm0
 ;   vmovupd (%rsp), %ymm5
-;   vaddpd %ymm0, %ymm5, %ymm6
+;   vaddpd 0x20(%rsp), %ymm5, %ymm6
 ;   movq %r12, %rdi
 ;   vmovupd %ymm6, (%rdi) ; trap: heap_oob
 ;   movq 0x40(%rsp), %r12
