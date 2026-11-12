@@ -92,7 +92,7 @@ impl TargetIsa for X64Backend {
         want_disasm: bool,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<CompiledCodeStencil> {
-        ymm::check_function(func, &self.x64_flags)?;
+        ymm::check_function(func, &self.flags, &self.x64_flags, &self.triple)?;
         let vcode = self.compile_vcode(func, domtree, regalloc_ctx, ctrl_plane)?;
 
         let emit_result = vcode.emit(&regalloc_ctx.output, want_disasm, &self.flags, ctrl_plane)?;

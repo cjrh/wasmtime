@@ -629,6 +629,46 @@ mod test {
         assert_eq!(pretty_print_hexadecimal(&assembled), "62F4FC1801CA");
     }
 
+    /// Exact bytes for the 256-bit forms, checked against GNU `as`, with
+    /// `ymm8`-`ymm15` in each of ModRM.reg, ModRM.rm and VEX.vvvv. Capstone
+    /// also decodes each one back to the same instruction.
+    #[test]
+    fn ymm_encodings() {
+        use crate::inst::{
+            vaddpd_y, vandnpd_y, vblendpd_y, vcmppd_y, vinsertf128_y, vorpd_y, vpbroadcastq_y,
+            vxorpd_y,
+        };
+        use crate::{Imm8, XmmMem};
+        let x = FuzzReg::new;
+        let m = |n| XmmMem::<FuzzReg, FuzzReg>::Xmm(FuzzReg::new(n));
+        let cases: [(Inst<FuzzRegs>, &str); 11] = [
+            (vpbroadcastq_y::new(x(3), x(9)).into(), "C4C27D59D9"),
+            (vpbroadcastq_y::new(x(12), x(1)).into(), "C4627D59E1"),
+            (vorpd_y::new(x(5), x(11), m(2)).into(), "C5A556EA"),
+            (vorpd_y::new(x(9), x(1), m(10)).into(), "C4417556CA"),
+            (vxorpd_y::new(x(14), x(8), m(15)).into(), "C4413D57F7"),
+            (vxorpd_y::new(x(0), x(13), m(4)).into(), "C59557C4"),
+            (vaddpd_y::new(x(2), x(15), m(1)).into(), "C58558D1"),
+            (vandnpd_y::new(x(4), x(12), m(3)).into(), "C59D55E3"),
+            (
+                vblendpd_y::new(x(6), x(9), m(7), Imm8::new(5)).into(),
+                "C4E3350DF705",
+            ),
+            (
+                vinsertf128_y::new(x(3), x(14), m(2), Imm8::new(1)).into(),
+                "C4E30D18DA01",
+            ),
+            (
+                vcmppd_y::new(x(11), x(10), m(5), Imm8::new(1)).into(),
+                "C52DC2DD01",
+            ),
+        ];
+        for (inst, bytes) in cases {
+            assert_eq!(pretty_print_hexadecimal(&assemble(&inst)), bytes, "{inst}");
+            roundtrip(&inst);
+        }
+    }
+
     /// Companion to [`apx_addq_rvm_ndd_encoding`] covering a memory operand.
     ///
     /// APX map-4 instructions are legacy instructions promoted into EVEX, so

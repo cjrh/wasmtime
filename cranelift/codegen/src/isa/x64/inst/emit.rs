@@ -161,7 +161,9 @@ fn emit_reloc(sink: &mut MachBuffer<Inst>, kind: Reloc, name: &ExternalName, add
 ///   care?)
 /// Whether `inst` transfers control out of the function, to a callee or the
 /// caller: where a function using 256-bit vectors executes `vzeroupper`
-/// (`isa/x64/ymm.rs`).
+/// (`isa/x64/ymm.rs`). Each one clobbers every vector register, so no
+/// 256-bit value is live there. `CoffTlsGetAddr` is not listed: it is an
+/// inline load sequence that keeps vector registers.
 fn leaves_function(inst: &Inst) -> bool {
     match inst {
         Inst::CallKnown { .. }
@@ -170,8 +172,7 @@ fn leaves_function(inst: &Inst) -> bool {
         | Inst::ReturnCallUnknown { .. }
         | Inst::StackSwitchBasic { .. }
         | Inst::ElfTlsGetAddr { .. }
-        | Inst::MachOTlsGetAddr { .. }
-        | Inst::CoffTlsGetAddr { .. } => true,
+        | Inst::MachOTlsGetAddr { .. } => true,
         Inst::External { inst } => matches!(
             inst,
             asm::inst::Inst::retq_zo(_) | asm::inst::Inst::retq_i(_)

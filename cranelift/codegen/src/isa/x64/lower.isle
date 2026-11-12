@@ -3278,41 +3278,45 @@
 ;; standard `movss` and `movsd` instructions can be used as-if we're storing a
 ;; f32 or f64 despite the source perhaps being an integer vector since the
 ;; result of the instruction is the same.
+;;
+;; The source is restricted to 128 bits: these index the lane within one
+;; 128-bit register, which is wrong for lanes in the upper half of a 256-bit
+;; vector. `lower_ymm.isle` lowers that `extractlane` separately.
 (rule 2 (lower (store (little_or_native_endian flags)
-                    (extractlane $F32 value (u8_from_uimm8 0))
+                    (extractlane $F32 value @ (value_type (ty_vec128 _)) (u8_from_uimm8 0))
                     address
                     offset))
       (side_effect
        (x64_movss_store (to_amode flags address offset) value)))
 (rule 2 (lower (store (little_or_native_endian flags)
-                    (extractlane $F64 value (u8_from_uimm8 0))
+                    (extractlane $F64 value @ (value_type (ty_vec128 _)) (u8_from_uimm8 0))
                     address
                     offset))
       (side_effect
        (x64_movsd_store (to_amode flags address offset) value)))
 (rule 2 (lower (store (little_or_native_endian flags)
-                    (extractlane $I8 value (u8_from_uimm8 n))
+                    (extractlane $I8 value @ (value_type (ty_vec128 _)) (u8_from_uimm8 n))
                     address
                     offset))
       (if-let true (has_sse41))
       (side_effect
        (x64_pextrb_store (to_amode flags address offset) value n)))
 (rule 2 (lower (store (little_or_native_endian flags)
-                    (extractlane $I16 value (u8_from_uimm8 n))
+                    (extractlane $I16 value @ (value_type (ty_vec128 _)) (u8_from_uimm8 n))
                     address
                     offset))
       (if-let true (has_sse41))
       (side_effect
        (x64_pextrw_store (to_amode flags address offset) value n)))
 (rule 2 (lower (store (little_or_native_endian flags)
-                    (extractlane $I32 value (u8_from_uimm8 n))
+                    (extractlane $I32 value @ (value_type (ty_vec128 _)) (u8_from_uimm8 n))
                     address
                     offset))
       (if-let true (has_sse41))
       (side_effect
        (x64_pextrd_store (to_amode flags address offset) value n)))
 (rule 2 (lower (store (little_or_native_endian flags)
-                    (extractlane $I64 value (u8_from_uimm8 n))
+                    (extractlane $I64 value @ (value_type (ty_vec128 _)) (u8_from_uimm8 n))
                     address
                     offset))
       (if-let true (has_sse41))

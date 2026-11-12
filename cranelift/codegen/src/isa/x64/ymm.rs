@@ -20,7 +20,9 @@ use crate::ir::{
 use crate::isa::CallConv;
 use crate::isa::x64::settings as x64_settings;
 use crate::result::{CodegenError, CodegenResult};
+use crate::settings::Flags;
 use alloc::format;
+use target_lexicon::Triple;
 
 fn is_ymm(ty: Type) -> bool {
     ty.is_vector() && ty.bits() == 256
@@ -58,7 +60,12 @@ fn convention_allowed(cc: CallConv) -> bool {
 }
 
 /// Admit `f` for lowering. A function without 256-bit values is unaffected.
-pub(crate) fn check_function(f: &Function, flags: &x64_settings::Flags) -> CodegenResult<()> {
+pub(crate) fn check_function(
+    f: &Function,
+    shared: &Flags,
+    flags: &x64_settings::Flags,
+    triple: &Triple,
+) -> CodegenResult<()> {
     check_signature(f, &f.signature)?;
     for (_, sig) in f.dfg.signatures.iter() {
         check_signature(f, sig)?;
@@ -81,6 +88,15 @@ pub(crate) fn check_function(f: &Function, flags: &x64_settings::Flags) -> Codeg
                 f,
                 format!("call with convention {}", sig.call_conv),
             ));
+        }
+    }
+    // Lowering adds calls of its own: libcalls (`emit_vm_call`, for example
+    // a scalar `fma` without FMA) and `memcpy` for struct arguments. Their
+    // conventions come from `libcall_call_conv`, not from `f`.
+    for default in [CallConv::triple_default(triple), f.signature.call_conv] {
+        let cc = CallConv::for_libcall(shared, default);
+        if !convention_allowed(cc) {
+            return Err(unsupported(f, format!("libcall convention {cc}")));
         }
     }
     for block in f.layout.blocks() {

@@ -1,0 +1,14 @@
+test compile expect-fail
+set libcall_call_conv=preserve_all
+target x86_64 has_avx has_avx2 has_sse41
+
+;; Lowering calls libcalls (here `fma` without FMA) with `libcall_call_conv`,
+;; which preserves the low 128 bits of vector registers only
+;; (`isa/x64/ymm.rs`).
+function %fma_libcall(i64, f64) -> f64 {
+block0(v0: i64, v1: f64):
+    v2 = load.f64x4 v0
+    v3 = fma v1, v1, v1
+    store v2, v0
+    return v3
+}

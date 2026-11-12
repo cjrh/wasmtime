@@ -1,0 +1,45 @@
+test compile precise-output
+set tls_model=coff
+target x86_64 has_avx has_avx2 has_sse41
+
+;; The COFF TLS sequence is inline loads, not a call: a 256-bit value stays
+;; in its register across it, with no `vzeroupper` before it.
+function %tls(i64) -> i64 system_v {
+    gv0 = symbol colocated tls %sym
+block0(v0: i64):
+    v1 = load.f64x4 v0
+    v2 = tls_value.i64 gv0
+    v3 = fadd v1, v1
+    store v3, v0
+    return v2
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm5
+;   %rax = coff_tls_get_addr TestCase(%sym)
+;   vaddpd %ymm5, %ymm5, %ymm4
+;   vmovupd %ymm4, (%rdi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm5 ; trap: heap_oob
+;   movl (%rip), %eax ; reloc_external PCRel4 %CoffTlsIndex -4
+;   movq %gs:0x58, %rcx
+;   movq (%rcx, %rax, 8), %rax
+;   leaq (%rax), %rax ; reloc_external SecRel %sym 0
+;   vaddpd %ymm5, %ymm5, %ymm4
+;   vmovupd %ymm4, (%rdi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+

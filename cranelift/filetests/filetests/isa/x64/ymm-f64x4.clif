@@ -382,3 +382,57 @@ block0(v0: i64):
 ;   .byte 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 ;   .byte 0x10, 0x40
 
+function %store_lanes(i64, i64) {
+block0(v0: i64, v1: i64):
+    v2 = load.i64x4 v0
+    v3 = extractlane v2, 0
+    store v3, v1
+    v4 = extractlane v2, 1
+    store v4, v1+8
+    v5 = extractlane v2, 2
+    store v5, v1+16
+    v6 = extractlane v2, 3
+    store v6, v1+24
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   vmovupd (%rdi), %ymm0
+;   vmovq %xmm0, %r9
+;   movq %r9, (%rsi)
+;   vpextrq $0x1, %xmm0, %r10
+;   movq %r10, 8(%rsi)
+;   vextractf128 $0x1, %ymm0, %xmm1
+;   vmovq %xmm1, %rax
+;   movq %rax, 0x10(%rsi)
+;   vextractf128 $0x1, %ymm0, %xmm0
+;   vpextrq $0x1, %xmm0, %rax
+;   movq %rax, 0x18(%rsi)
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   vmovupd (%rdi), %ymm0 ; trap: heap_oob
+;   vmovq %xmm0, %r9
+;   movq %r9, (%rsi) ; trap: heap_oob
+;   vpextrq $1, %xmm0, %r10
+;   movq %r10, 8(%rsi) ; trap: heap_oob
+;   vextractf128 $1, %ymm0, %xmm1
+;   vmovq %xmm1, %rax
+;   movq %rax, 0x10(%rsi) ; trap: heap_oob
+;   vextractf128 $1, %ymm0, %xmm0
+;   vpextrq $1, %xmm0, %rax
+;   movq %rax, 0x18(%rsi) ; trap: heap_oob
+;   movq %rbp, %rsp
+;   popq %rbp
+;   vzeroupper
+;   retq
+
