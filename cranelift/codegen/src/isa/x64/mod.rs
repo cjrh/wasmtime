@@ -30,6 +30,7 @@ mod ymm;
 
 #[cfg(feature = "unwind")]
 pub use inst::unwind::systemv::create_cie;
+pub use ymm::UNSUPPORTED_256_BIT;
 
 /// An X64 backend.
 pub(crate) struct X64Backend {

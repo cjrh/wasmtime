@@ -38,8 +38,14 @@ pub(crate) fn uses_ymm(f: &Function) -> bool {
     f.dfg.values().any(|v| is_ymm(f.dfg.value_type(v)))
 }
 
+/// The start of every `CodegenError::Unsupported` message with which
+/// [`check_function`] rejects a function. An embedder that builds a 256-bit
+/// form speculatively can match it and build the function again without
+/// 256-bit types.
+pub const UNSUPPORTED_256_BIT: &str = "256-bit vectors in ";
+
 fn unsupported(f: &Function, what: impl core::fmt::Display) -> CodegenError {
-    CodegenError::Unsupported(format!("256-bit vectors in {}: {what}", f.name))
+    CodegenError::Unsupported(format!("{UNSUPPORTED_256_BIT}{}: {what}", f.name))
 }
 
 fn check_signature(f: &Function, sig: &Signature) -> CodegenResult<()> {
@@ -170,4 +176,124 @@ pub(crate) fn check_function(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cursor::{Cursor, FuncCursor};
+    use crate::ir::{AbiParam, InstBuilder, UserFuncName};
+    use crate::settings::{self, Configurable};
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use core::str::FromStr;
+
+    fn flags(libcall: &str) -> Flags {
+        let mut b = settings::builder();
+        b.set("libcall_call_conv", libcall).unwrap();
+        Flags::new(b)
+    }
+
+    fn x64_flags(avx2: bool) -> x64_settings::Flags {
+        let mut b = x64_settings::builder();
+        for name in ["has_avx", "has_sse41"] {
+            b.enable(name).unwrap();
+        }
+        if avx2 {
+            b.enable("has_avx2").unwrap();
+        }
+        x64_settings::Flags::new(&flags("isa_default"), &b)
+    }
+
+    /// A function that splats an `F64X4` and applies `op` to it.
+    fn wide(cc: CallConv, op: impl FnOnce(&mut FuncCursor, crate::ir::Value)) -> Function {
+        let mut f = Function::with_name_signature(UserFuncName::testcase("f"), Signature::new(cc));
+        let block = f.dfg.make_block();
+        f.layout.append_block(block);
+        let mut cursor = FuncCursor::new(&mut f);
+        cursor.goto_bottom(block);
+        let zero = cursor.ins().f64const(0.0);
+        let v = cursor.ins().splat(types::F64X4, zero);
+        op(&mut cursor, v);
+        cursor.ins().return_(&[]);
+        f
+    }
+
+    #[test]
+    fn every_rejection_starts_with_the_exported_prefix() {
+        let triple = Triple::from_str("x86_64-unknown-linux-gnu").unwrap();
+        let ok = x64_flags(true);
+        let default = flags("isa_default");
+        let mut wide_param = wide(CallConv::SystemV, |_, _| {});
+        wide_param
+            .signature
+            .params
+            .push(AbiParam::new(types::F64X4));
+        let mut wide_call = wide(CallConv::SystemV, |_, _| {});
+        let mut sig = Signature::new(CallConv::SystemV);
+        sig.returns.push(AbiParam::new(types::I64X4));
+        wide_call.import_signature(sig);
+        let mut windows_call = wide(CallConv::SystemV, |_, _| {});
+        windows_call.import_signature(Signature::new(CallConv::WindowsFastcall));
+        let cases: Vec<(&str, Function, Flags, x64_settings::Flags)> = Vec::from([
+            ("256-bit arguments", wide_param, default.clone(), ok.clone()),
+            ("and results", wide_call, default.clone(), ok.clone()),
+            (
+                "requires AVX2",
+                wide(CallConv::SystemV, |_, _| {}),
+                default.clone(),
+                x64_flags(false),
+            ),
+            (
+                "calling convention",
+                wide(CallConv::WindowsFastcall, |_, _| {}),
+                default.clone(),
+                ok.clone(),
+            ),
+            (
+                "call with convention",
+                windows_call,
+                default.clone(),
+                ok.clone(),
+            ),
+            (
+                "libcall convention",
+                wide(CallConv::SystemV, |_, _| {}),
+                flags("preserve_all"),
+                ok.clone(),
+            ),
+            (
+                "f32x8",
+                wide(CallConv::SystemV, |c, _| {
+                    let zero = c.ins().f32const(0.0);
+                    c.ins().splat(types::F32X8, zero);
+                }),
+                default.clone(),
+                ok.clone(),
+            ),
+            (
+                "fneg",
+                wide(CallConv::SystemV, |c, v| {
+                    c.ins().fneg(v);
+                }),
+                default.clone(),
+                ok.clone(),
+            ),
+        ]);
+        // Each case names text of the path that must reject it.
+        for (name, f, shared, x64) in cases {
+            let message = match check_function(&f, &shared, &x64, &triple) {
+                Err(CodegenError::Unsupported(message)) => message,
+                other => panic!("{name}: expected a rejection, got {other:?}"),
+            };
+            assert!(
+                message.starts_with(UNSUPPORTED_256_BIT) && message.contains(name),
+                "{name}: {message}"
+            );
+        }
+        let admitted: Result<(), String> =
+            check_function(&wide(CallConv::SystemV, |_, _| {}), &default, &ok, &triple)
+                .map_err(|e| alloc::format!("{e:?}"));
+        assert_eq!(admitted, Ok(()));
+    }
 }
