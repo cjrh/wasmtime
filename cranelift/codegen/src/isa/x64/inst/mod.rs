@@ -1549,6 +1549,19 @@ impl MachInst for Inst {
         true
     }
 
+    fn call_temp(&self) -> Option<RealReg> {
+        match self {
+            Inst::CallKnown { info } => Some(info.callee_conv),
+            Inst::CallUnknown { info } => Some(info.callee_conv),
+            _ => None,
+        }
+        .and_then(|conv| {
+            X64ABIMachineSpec::retval_temp_reg(conv)
+                .to_reg()
+                .to_real_reg()
+        })
+    }
+
     fn is_safepoint(&self) -> bool {
         match self {
             Inst::CallKnown { .. } | Inst::CallUnknown { .. } | Inst::StackSwitchBasic { .. } => {

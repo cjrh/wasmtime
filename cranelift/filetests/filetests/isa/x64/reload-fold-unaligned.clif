@@ -1,0 +1,87 @@
+test compile precise-output
+set regalloc_fold_reloads=true
+set regalloc_forward_spills=true
+set regalloc_checker=true
+target x86_64 has_sse41
+
+;; `winch` is a convention for which `frame_offset_aligned_16` is false: the
+;; spill slot is not known to be 16-byte aligned. A legacy SSE packed operand
+;; faults on an unaligned address, so the reload stays and `addpd` reads a
+;; register. The same body under `system_v` folds; see `reload-fold.clif`.
+function %vector(f64x2, f64x2) -> f64x2 winch {
+    fn0 = %g(f64x2) -> f64x2
+block0(v0: f64x2, v1: f64x2):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   movdqu <offset:1>+(%rsp), %xmm1
+;   addpd %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   movdqu (%rsp), %xmm1
+;   addpd %xmm1, %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A scalar operand has no alignment requirement and still folds.
+function %scalar(f64, f64) -> f64 winch {
+    fn0 = %g(f64) -> f64
+block0(v0: f64, v1: f64):
+    v2 = call fn0(v0)
+    v3 = fadd v2, v1
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block0:
+;   movdqu %xmm1, <offset:1>+(%rsp)
+;   load_ext_name %g+0, %rsi
+;   call    *%rsi
+;   addsd <offset:1>+(%rsp), %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+;   subq $0x10, %rsp
+; block1: ; offset 0x8
+;   movdqu %xmm1, (%rsp)
+;   movabsq $0, %rsi ; reloc_external Abs8 %g 0
+;   callq *%rsi
+;   addsd (%rsp), %xmm0
+;   addq $0x10, %rsp
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+

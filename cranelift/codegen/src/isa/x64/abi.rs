@@ -1418,6 +1418,205 @@ mod tests {
         ));
     }
 
+    const CONVENTIONS: [isa::CallConv; 8] = [
+        isa::CallConv::Fast,
+        isa::CallConv::Tail,
+        isa::CallConv::SystemV,
+        isa::CallConv::WindowsFastcall,
+        isa::CallConv::AppleAarch64,
+        isa::CallConv::Probestack,
+        isa::CallConv::Winch,
+        isa::CallConv::PreserveAll,
+    ];
+
+    /// A frame as `frame_offset_aligned_16` needs it: `rbp` pushed, every
+    /// size a multiple of 16.
+    fn aligned_frame_layout() -> FrameLayout {
+        FrameLayout {
+            setup_area_size: 16,
+            clobber_size: 32,
+            ..make_frame_layout(48)
+        }
+    }
+
+    /// A legacy SSE packed operand may address a spill slot only where
+    /// this holds, so it must be false wherever alignment is not known.
+    #[test]
+    fn frame_offset_alignment_is_known_only_for_aligned_conventions() {
+        let aligned = |conv, layout: &FrameLayout, offset| {
+            X64ABIMachineSpec::frame_offset_aligned_16(conv, layout, offset)
+        };
+        let layout = aligned_frame_layout();
+        for conv in CONVENTIONS {
+            let expected = matches!(
+                conv,
+                isa::CallConv::SystemV
+                    | isa::CallConv::WindowsFastcall
+                    | isa::CallConv::Fast
+                    | isa::CallConv::Tail
+            );
+            assert_eq!(aligned(conv, &layout, 32), expected, "{conv:?}");
+            assert!(!aligned(conv, &layout, 8), "{conv:?}");
+            assert!(!aligned(conv, &layout, 40), "{conv:?}");
+        }
+
+        let conv = isa::CallConv::SystemV;
+        let changed = [
+            FrameLayout {
+                setup_area_size: 0,
+                ..aligned_frame_layout()
+            },
+            FrameLayout {
+                clobber_size: 24,
+                ..aligned_frame_layout()
+            },
+            FrameLayout {
+                fixed_frame_storage_size: 40,
+                ..aligned_frame_layout()
+            },
+            FrameLayout {
+                tail_args_size: 8,
+                ..aligned_frame_layout()
+            },
+        ];
+        for layout in &changed {
+            assert!(!aligned(conv, layout, 32), "{layout:?}");
+        }
+        let more_tail_args = FrameLayout {
+            tail_args_size: 32,
+            incoming_args_size: 16,
+            ..aligned_frame_layout()
+        };
+        assert!(aligned(conv, &more_tail_args, 32));
+    }
+
+    /// Spill forwarding reads a register after a call only if the call
+    /// neither clobbers it nor may use it as a temporary. Every call may
+    /// write `retval_temp_reg`; all conventions but `preserve_all` declare
+    /// it clobbered.
+    #[test]
+    fn calls_declare_the_return_value_temporary_except_preserve_all() {
+        for conv in CONVENTIONS {
+            let temp = X64ABIMachineSpec::retval_temp_reg(conv).to_reg();
+            let temp = temp.to_real_reg().unwrap().into();
+            for try_call in [false, true] {
+                if try_call
+                    && !matches!(
+                        conv,
+                        isa::CallConv::Tail
+                            | isa::CallConv::SystemV
+                            | isa::CallConv::Winch
+                            | isa::CallConv::PreserveAll
+                    )
+                {
+                    // Not implemented: `get_regs_clobbered_by_call` panics.
+                    continue;
+                }
+                let clobbers = X64ABIMachineSpec::get_regs_clobbered_by_call(conv, try_call);
+                let expected = conv != isa::CallConv::PreserveAll || try_call;
+                assert_eq!(clobbers.contains(temp), expected, "{conv:?} {try_call}");
+            }
+        }
+    }
+
+    /// Forwarding a spilled register across a call, with the clobbers and
+    /// the temporary of the callee's convention: `Some(same)` if a reload
+    /// into the stored register is dropped, and whether a reload into
+    /// another register becomes a copy.
+    fn forwarded_across_call(conv: isa::CallConv, stored: Reg) -> (bool, bool) {
+        use crate::machinst::InsnIndex;
+        use crate::machinst::reload_fold::{EditFold, ReloadFolds, ReloadInsts};
+        use regalloc2::{Allocation, PReg, SpillSlot};
+
+        struct NoFolds;
+        impl ReloadInsts for NoFolds {
+            fn can_fold(&mut self, _: InsnIndex, _: PReg, _: SpillSlot) -> bool {
+                false
+            }
+            fn fold(&mut self, _: InsnIndex, _: PReg, _: SpillSlot) -> bool {
+                false
+            }
+            fn def_keeps_bits(&self, _: InsnIndex, _: PReg) -> bool {
+                true
+            }
+        }
+
+        let stored: PReg = stored.to_real_reg().unwrap().into();
+        let other = if stored.class() == RegClass::Int {
+            regs::r13()
+        } else {
+            regs::xmm15()
+        };
+        let other: PReg = other.to_real_reg().unwrap().into();
+        let clobbers = X64ABIMachineSpec::get_regs_clobbered_by_call(conv, false);
+        let temp = X64ABIMachineSpec::retval_temp_reg(conv).to_reg();
+        let may_write = PRegSet::empty().with(temp.to_real_reg().unwrap().into());
+        let slot = Allocation::stack(SpillSlot::new(0));
+
+        let mut results = [false; 2];
+        for (result, to) in results.iter_mut().zip([stored, other]) {
+            let mut folds = ReloadFolds::default();
+            folds.forward = true;
+            folds.start_block();
+            folds.edit(0, Allocation::reg(stored), slot, &mut NoFolds);
+            folds.inst(
+                InsnIndex::new(0),
+                &[],
+                &[],
+                clobbers,
+                may_write,
+                &mut NoFolds,
+            );
+            folds.edit(1, slot, Allocation::reg(to), &mut NoFolds);
+            let expected = if to == stored {
+                EditFold::Skip
+            } else {
+                EditFold::MoveFrom(stored)
+            };
+            *result = match folds.edits.get(&1) {
+                None => false,
+                Some(decision) => {
+                    assert_eq!(*decision, expected);
+                    true
+                }
+            };
+        }
+        (results[0], results[1])
+    }
+
+    #[test]
+    fn spill_forwarding_across_a_call_follows_the_callee_convention() {
+        use isa::CallConv::*;
+        let kept = (true, true);
+        let lost = (false, false);
+        // Callee-saved under every convention with a clobber set.
+        for reg in [regs::rbx(), regs::r12(), regs::r14()] {
+            for conv in [SystemV, WindowsFastcall, Fast, Tail, PreserveAll] {
+                assert_eq!(forwarded_across_call(conv, reg), kept, "{conv:?} {reg:?}");
+            }
+            assert_eq!(forwarded_across_call(Winch, reg), lost, "{reg:?}");
+        }
+        // Caller-saved under every convention but `preserve_all`.
+        for reg in [regs::rax(), regs::rcx(), regs::r10(), regs::xmm0()] {
+            for conv in [SystemV, WindowsFastcall, Fast, Tail, Winch] {
+                assert_eq!(forwarded_across_call(conv, reg), lost, "{conv:?} {reg:?}");
+            }
+            assert_eq!(forwarded_across_call(PreserveAll, reg), kept, "{reg:?}");
+        }
+        // Callee-saved under Windows fastcall only.
+        for reg in [regs::rsi(), regs::rdi(), regs::xmm6(), regs::xmm15()] {
+            if reg != regs::xmm15() {
+                assert_eq!(forwarded_across_call(WindowsFastcall, reg), kept, "{reg:?}");
+            }
+            assert_eq!(forwarded_across_call(SystemV, reg), lost, "{reg:?}");
+        }
+        // The return value temporary is never forwarded, although a
+        // `preserve_all` callee does not declare it clobbered.
+        for conv in CONVENTIONS {
+            assert_eq!(forwarded_across_call(conv, regs::r11()), lost, "{conv:?}");
+        }
+    }
+
     #[test]
     fn frame_layout_over_limit_is_rejected() {
         let layout = make_frame_layout(ONE_GIB + 1);

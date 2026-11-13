@@ -41,8 +41,15 @@ pub(crate) fn define() -> SettingGroup {
             (x86-64, for read-only XMM operands). Off by default: the rewrite
             runs after the register allocator and its checker, and a packed SSE
             fold relies on the stack alignment of the calling convention.
-            With `regalloc_checker` enabled, each rewritten block is validated
-            against the allocator's output.
+            With `regalloc_checker` enabled, or in a build with debug
+            assertions, each rewritten block is validated against the
+            allocator's output.
+
+            A function that has debug value labels (`Function::dfg` value
+            labels, used for variable locations in debug info) is left as the
+            allocator produced it, because value locations name the registers
+            the allocator chose. Such a function therefore gets different
+            code from the same function without labels.
         "#,
         false,
     );
@@ -56,7 +63,8 @@ pub(crate) fn define() -> SettingGroup {
             slot becomes a register copy, or nothing for the same register.
             Applies to every register class on backends that opt in through
             `MachInst::folds_reloads` (x86-64). Off by default, for the reasons
-            given for `regalloc_fold_reloads`.
+            given for `regalloc_fold_reloads`, and likewise validated and
+            disabled for a function with debug value labels.
         "#,
         false,
     );

@@ -757,4 +757,40 @@ mod tests {
         };
         assert!(!evex.fold_reload(source, 16, 16, true, false));
     }
+
+    /// A legacy SSE packed operand faults on an address that is not a
+    /// multiple of 16, so it takes only a slot known to be aligned. Scalar
+    /// and VEX operands take any slot.
+    #[test]
+    fn reload_fold_needs_an_aligned_slot_for_legacy_packed_operands() {
+        use crate::isa::x64::inst::regs::{xmm1, xmm2, xmm3};
+        use crate::isa::x64::inst::{Inst, asm};
+        use crate::machinst::MachInst;
+
+        let wdst = || WritableXmm::from_writable_reg(Writable::from_reg(xmm1())).unwrap();
+        let dst = || PairedXmm::from(wdst());
+        let src = || Xmm::new(xmm2()).unwrap();
+        let other = || Xmm::new(xmm3()).unwrap();
+        let source = xmm2().to_real_reg().unwrap();
+        let folds = |inst: asm::inst::Inst<super::CraneliftRegisters>, aligned| {
+            Inst::External { inst }.fold_reload(source, 16, 16, aligned, false)
+        };
+
+        let packed = || asm::inst::addpd_a::new(dst(), src()).into();
+        assert!(folds(packed(), true));
+        assert!(!folds(packed(), false));
+        let scalar = || asm::inst::addsd_a::new(dst(), src()).into();
+        assert!(folds(scalar(), true));
+        assert!(folds(scalar(), false));
+        let vex = || asm::inst::vaddpd_b::new(wdst(), other(), src()).into();
+        assert!(folds(vex(), true));
+        assert!(folds(vex(), false));
+
+        // Committing an unaligned fold is refused too, and leaves the
+        // instruction as it was.
+        let mut inst = Inst::External { inst: packed() };
+        let before = format!("{inst:?}");
+        assert!(!inst.fold_reload(source, 16, 16, false, true));
+        assert_eq!(format!("{inst:?}"), before);
+    }
 }

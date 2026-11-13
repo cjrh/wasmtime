@@ -20,6 +20,7 @@
 use crate::CodegenError;
 use crate::FxHashMap;
 use crate::ir::{self, Constant, ConstantData, ValueLabel, types};
+use crate::machinst::reload_fold::{EditFold, ReloadCheck, ReloadFolds, ReloadInsts};
 use crate::ranges::Ranges;
 use crate::timing;
 use crate::trace;
@@ -252,47 +253,45 @@ fn apply_allocs<I: VCodeInst>(inst: &mut I, allocs: &[Allocation]) {
     debug_assert!(allocs.next().is_none());
 }
 
-/// A register allocator edit that loaded a spill slot into a register which
-/// has not been written since; see [`VCode::fold_reloads`].
-#[derive(Clone, Copy)]
-struct Reload {
-    reg: regalloc2::PReg,
-    slot: regalloc2::SpillSlot,
-    /// The index of the edit in `regalloc2::Output::edits`.
-    edit: usize,
-    /// The one instruction that has read `reg` so far, through an operand
-    /// that can address the slot instead. Any other read abandons the
-    /// reload.
-    reader: Option<InsnIndex>,
+/// The instructions of a `VCode` as the reload rewrites see them.
+struct VCodeReloadInsts<'a, I: VCodeInst> {
+    insts: &'a mut [I],
+    abi: &'a Callee<I::ABIMachineSpec>,
 }
 
-/// What to emit for an edit changed by [`VCode::fold_reloads`].
-#[derive(Clone, Copy)]
-enum EditFold {
-    /// Nothing: the reload's reader takes the slot, or the register
-    /// already holds its value.
-    Skip,
-    /// A copy from this register, which holds the value of the slot the
-    /// edit would have loaded.
-    MoveFrom(regalloc2::PReg),
+impl<I: VCodeInst> VCodeReloadInsts<'_, I> {
+    fn fold_reload(
+        &mut self,
+        inst: InsnIndex,
+        reg: regalloc2::PReg,
+        slot: regalloc2::SpillSlot,
+        apply: bool,
+    ) -> bool {
+        let offset = self.abi.get_spillslot_offset(slot);
+        let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
+        let aligned = self.abi.spillslot_aligned_16(slot);
+        self.insts[inst.index()].fold_reload(reg.into(), offset, bytes, aligned, apply)
+    }
 }
 
-/// The state of [`VCode::fold_reloads`], reused across blocks.
-#[derive(Default)]
-struct ReloadFolds {
-    /// Remove a reload whose one reader can address the spill slot.
-    fold: bool,
-    /// Reuse a register that still holds a spilled value.
-    forward: bool,
-    /// The pending reloads; at most one per register.
-    reloads: Vec<Reload>,
-    /// The registers that hold the value of a spill slot.
-    held: Vec<(regalloc2::PReg, regalloc2::SpillSlot)>,
-    /// The decisions for this block, keyed by edit index.
-    edits: FxHashMap<usize, EditFold>,
-    /// The instructions of this block that now read a slot in place of a
-    /// register, for [`VCode::check_reload_folds`].
-    folded: Vec<(InsnIndex, regalloc2::PReg, regalloc2::SpillSlot)>,
+impl<I: VCodeInst> ReloadInsts for VCodeReloadInsts<'_, I> {
+    fn can_fold(
+        &mut self,
+        inst: InsnIndex,
+        reg: regalloc2::PReg,
+        slot: regalloc2::SpillSlot,
+    ) -> bool {
+        self.fold_reload(inst, reg, slot, false)
+    }
+
+    fn fold(&mut self, inst: InsnIndex, reg: regalloc2::PReg, slot: regalloc2::SpillSlot) -> bool {
+        self.fold_reload(inst, reg, slot, true)
+    }
+
+    fn def_keeps_bits(&self, inst: InsnIndex, reg: regalloc2::PReg) -> bool {
+        let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
+        self.insts[inst.index()].def_keeps_bits(reg.into(), bytes)
+    }
 }
 
 /// A builder for a VCode function body.
@@ -748,8 +747,9 @@ impl<I: VCodeInst> VCode<I> {
     ///   register's bits ([`MachInst::def_keeps_bits`]) counts as a read.
     ///
     /// Both rely on a register keeping its value until an instruction
-    /// declares a def or a clobber of it, or an edit writes it. The register
-    /// allocator relies on the same property for every allocatable register.
+    /// declares a def or a clobber of it, or an edit writes it. The
+    /// [`reload_fold`](super::reload_fold) module makes the decisions and
+    /// records how that property was checked for x64.
     ///
     /// Only this block is examined, so a register that is not written again
     /// before the block ends keeps its reload, unless the block returns.
@@ -763,197 +763,52 @@ impl<I: VCodeInst> VCode<I> {
         first_edit: usize,
         state: &mut ReloadFolds,
     ) {
-        state.reloads.clear();
-        state.held.clear();
-        state.edits.clear();
-        state.folded.clear();
+        state.start_block();
         let mut edit_idx = first_edit;
         for iix in self.block_ranges.get(block.index()) {
             let iix = InsnIndex::new(iix);
+            let mut insts = VCodeReloadInsts {
+                insts: &mut self.insts,
+                abi: &self.abi,
+            };
             while let Some((pos, Edit::Move { from, to })) = regalloc.edits.get(edit_idx) {
                 if *pos > ProgPoint::before(iix) {
                     break;
                 }
-                if let (Some(slot), Some(reg)) = (from.as_stack(), to.as_reg()) {
-                    if state.held.contains(&(reg, slot)) {
-                        // The register already holds the slot's value.
-                        state.edits.insert(edit_idx, EditFold::Skip);
-                        edit_idx += 1;
-                        continue;
-                    }
-                }
-                // The edit reads `from`.
-                if let Some(from) = from.as_reg() {
-                    if let Some(i) = state.reloads.iter().position(|r| r.reg == from) {
-                        state.reloads.swap_remove(i);
-                    }
-                }
-                // The edit writes `to`.
-                if let Some(to) = to.as_reg() {
-                    self.reload_reg_written(to, state);
-                    state.held.retain(|(reg, _)| *reg != to);
-                    if let Some(from) = from.as_stack() {
-                        let holder = state
-                            .held
-                            .iter()
-                            .find(|(reg, slot)| *slot == from && reg.class() == to.class());
-                        if let Some(&(src, _)) = holder {
-                            // A register still holds what was stored to
-                            // the slot: copy it. This comes before folding
-                            // because the copy does not wait for the store.
-                            state.edits.insert(edit_idx, EditFold::MoveFrom(src));
-                            state.held.push((to, from));
-                        } else if state.fold {
-                            state.reloads.push(Reload {
-                                reg: to,
-                                slot: from,
-                                edit: edit_idx,
-                                reader: None,
-                            });
-                        }
-                    }
-                } else if let Some(to) = to.as_stack() {
-                    state.reloads.retain(|r| r.slot != to || r.reader.is_some());
-                    state.held.retain(|(_, slot)| *slot != to);
-                    if let (Some(from), true) = (from.as_reg(), state.forward) {
-                        state.held.push((from, to));
-                    }
-                }
+                state.edit(edit_idx, *from, *to, &mut insts);
                 edit_idx += 1;
             }
 
-            if self.insts[iix.index()].is_term() == MachTerminator::Ret {
-                // The epilogue replaces a return, so its operands keep
-                // their virtual registers. No register it does not read
-                // is live after it.
-                let read = regalloc.inst_allocs(iix);
-                while let Some(reload) = state.reloads.last() {
-                    let reg = reload.reg;
-                    if read.iter().any(|alloc| alloc.as_reg() == Some(reg)) {
-                        state.reloads.pop();
-                    } else {
-                        self.reload_reg_written(reg, state);
-                    }
-                }
-                continue;
-            }
-            apply_allocs(&mut self.insts[iix.index()], regalloc.inst_allocs(iix));
-            if state.reloads.is_empty() && state.held.is_empty() {
-                continue;
-            }
-
-            let operands = &self.operands[self.operand_ranges.get(iix.index())];
             let allocs = regalloc.inst_allocs(iix);
-            let mut read = PRegSet::default();
-            let mut written = self.clobbers.get(&iix).cloned().unwrap_or_default();
-            for (operand, alloc) in operands.iter().zip(allocs) {
-                match (operand.kind(), alloc.as_reg(), alloc.as_stack()) {
-                    (OperandKind::Use, Some(reg), _) => read.add(reg),
-                    (OperandKind::Def, Some(reg), _) => {
-                        written.add(reg);
-                        // The reloaded value stays visible through a def
-                        // that keeps some of its bits, so the reload stays.
-                        if let Some(i) = state.reloads.iter().position(|r| r.reg == reg) {
-                            let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
-                            if self.insts[iix.index()].def_keeps_bits(reg.into(), bytes) {
-                                state.reloads.swap_remove(i);
-                            }
-                        }
-                    }
-                    (OperandKind::Def, _, Some(slot)) => {
-                        state
-                            .reloads
-                            .retain(|r| r.slot != slot || r.reader.is_some());
-                        state.held.retain(|(_, s)| *s != slot);
-                    }
-                    _ => {}
-                }
+            if insts.insts[iix.index()].is_term() == MachTerminator::Ret {
+                // The epilogue replaces a return, so its operands keep
+                // their virtual registers.
+                state.ret(allocs, &mut insts);
+                continue;
             }
-
-            let mut folded_here = false;
-            let mut i = 0;
-            while i < state.reloads.len() {
-                let Reload {
-                    reg, slot, reader, ..
-                } = state.reloads[i];
-                if read.contains(reg) {
-                    let (offset, bytes, aligned) = self.reload_slot(reg, slot);
-                    // One memory operand per instruction, and one reader
-                    // per reload.
-                    if reader.is_none()
-                        && !folded_here
-                        && self.insts[iix.index()].fold_reload(
-                            reg.into(),
-                            offset,
-                            bytes,
-                            aligned,
-                            false,
-                        )
-                    {
-                        folded_here = true;
-                        state.reloads[i].reader = Some(iix);
-                    } else {
-                        state.reloads.swap_remove(i);
-                        continue;
-                    }
-                }
-                i += 1;
+            apply_allocs(&mut insts.insts[iix.index()], allocs);
+            if state.is_idle() {
+                continue;
             }
-            if written != PRegSet::default() {
-                for reg in written {
-                    self.reload_reg_written(reg, state);
-                }
-                state.held.retain(|(reg, _)| !written.contains(*reg));
-            }
+            let operands = &self.operands[self.operand_ranges.get(iix.index())];
+            let clobbers = self.clobbers.get(&iix).cloned().unwrap_or_default();
+            let may_write = Self::call_temp(&insts.insts[iix.index()]);
+            state.inst(iix, operands, allocs, clobbers, may_write, &mut insts);
         }
     }
 
-    /// The offset and size of the spill slot that holds `reg` and whether
-    /// its address is a multiple of 16, as [`MachInst::fold_reload`] takes
-    /// them.
-    fn reload_slot(&self, reg: regalloc2::PReg, slot: regalloc2::SpillSlot) -> (i64, u32, bool) {
-        let offset = self.abi.get_spillslot_offset(slot);
-        let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
-        (offset, bytes, self.abi.spillslot_aligned_16(slot))
-    }
-
-    /// `reg` is written: the value a pending reload left in it is dead. Commit
-    /// the reload's fold if its one read found a reader that takes the slot.
-    fn reload_reg_written(&mut self, reg: regalloc2::PReg, state: &mut ReloadFolds) {
-        let Some(i) = state.reloads.iter().position(|r| r.reg == reg) else {
-            return;
-        };
-        let reload = state.reloads.swap_remove(i);
-        if let Some(iix) = reload.reader {
-            let (offset, bytes, aligned) = self.reload_slot(reg, reload.slot);
-            let folded =
-                self.insts[iix.index()].fold_reload(reg.into(), offset, bytes, aligned, true);
-            debug_assert!(folded);
-            if folded {
-                state.edits.insert(reload.edit, EditFold::Skip);
-                state.folded.push((iix, reg, reload.slot));
-            }
+    /// The register `inst` may write without declaring it; see
+    /// [`MachInst::call_temp`].
+    fn call_temp(inst: &I) -> PRegSet {
+        let mut set = PRegSet::default();
+        if let Some(reg) = inst.call_temp() {
+            set.add(reg.into());
         }
+        set
     }
 
-    /// Check the decisions `fold_reloads` made for `block` by running the
-    /// block twice over symbolic values, once with the allocator's edits and
-    /// once with the rewritten ones, and comparing what the instructions
-    /// read. Panics on a difference.
-    ///
-    /// A location starts with a symbol of its own; a def or a clobber gives
-    /// its location a new one, which for a def that may keep bits depends on
-    /// the old one. Every operand read must see the same symbol in both
-    /// runs, where a folded operand reads its slot. Every location must end
-    /// with the same symbol, except in a block that returns, where nothing
-    /// is live after the return's operands.
-    ///
-    /// This covers the pass's decisions: which reloads go, which register a
-    /// copy takes, and the order of reads and writes within the block. It
-    /// takes operands, clobbers and `def_keeps_bits` as declared, so it
-    /// does not find an instruction that writes a register without
-    /// declaring it, and it does not decode the rewritten instruction: that
-    /// the memory operand addresses the right bytes is covered by tests.
+    /// Check the decisions `fold_reloads` made for `block` with
+    /// [`ReloadCheck`], which panics on a wrong one.
     fn check_reload_folds(
         &self,
         regalloc: &regalloc2::Output,
@@ -961,38 +816,7 @@ impl<I: VCodeInst> VCode<I> {
         first_edit: usize,
         state: &ReloadFolds,
     ) {
-        #[derive(PartialEq, Eq, Hash)]
-        enum Symbol {
-            Initial(Allocation),
-            Def(InsnIndex, usize),
-            /// A def that may keep bits of the symbol it replaces.
-            PartialDef(InsnIndex, usize, u32),
-            Clobber(InsnIndex, regalloc2::PReg),
-        }
-        #[derive(Default)]
-        struct Run {
-            symbols: FxHashMap<Symbol, u32>,
-            /// Locations under the allocator's edits and the rewritten ones.
-            locations: [FxHashMap<Allocation, u32>; 2],
-        }
-        impl Run {
-            fn symbol(&mut self, symbol: Symbol) -> u32 {
-                let next = self.symbols.len() as u32;
-                *self.symbols.entry(symbol).or_insert(next)
-            }
-            fn get(&mut self, run: usize, alloc: Allocation) -> u32 {
-                if let Some(&symbol) = self.locations[run].get(&alloc) {
-                    return symbol;
-                }
-                let symbol = self.symbol(Symbol::Initial(alloc));
-                self.locations[run].insert(alloc, symbol);
-                symbol
-            }
-        }
-        const REWRITTEN: usize = 1;
-        let mut run = Run::default();
-        let mut returns = false;
-
+        let mut check = ReloadCheck::default();
         let mut edit_idx = first_edit;
         for iix in self.block_ranges.get(block.index()) {
             let iix = InsnIndex::new(iix);
@@ -1000,111 +824,43 @@ impl<I: VCodeInst> VCode<I> {
                 if *pos > ProgPoint::before(iix) {
                     break;
                 }
-                let value = run.get(0, *from);
-                run.locations[0].insert(*to, value);
-                match state.edits.get(&edit_idx) {
-                    Some(EditFold::Skip) => {}
-                    Some(EditFold::MoveFrom(reg)) => {
-                        let value = run.get(REWRITTEN, Allocation::reg(*reg));
-                        run.locations[REWRITTEN].insert(*to, value);
-                    }
-                    None => {
-                        let value = run.get(REWRITTEN, *from);
-                        run.locations[REWRITTEN].insert(*to, value);
-                    }
-                }
+                check.edit(*from, *to, state.edits.get(&edit_idx).copied());
                 edit_idx += 1;
             }
 
             let inst = &self.insts[iix.index()];
             let allocs = regalloc.inst_allocs(iix);
-            let folded = state.folded.iter().find(|(reader, ..)| *reader == iix);
+            let folded = state
+                .folded
+                .iter()
+                .find(|(reader, ..)| *reader == iix)
+                .map(|&(_, reg, slot)| (reg, slot));
             if inst.is_term() == MachTerminator::Ret {
                 assert!(folded.is_none());
-                for alloc in allocs {
-                    assert_eq!(
-                        run.get(0, *alloc),
-                        run.get(REWRITTEN, *alloc),
-                        "reload folding changed {alloc} read by the return {iix:?}",
-                    );
-                }
-                returns = true;
+                check.ret(iix, allocs);
                 continue;
             }
-
-            let operands = &self.operands[self.operand_ranges.get(iix.index())];
-            let mut folded_reads = 0;
-            for (operand, alloc) in operands.iter().zip(allocs) {
-                if operand.kind() != OperandKind::Use {
-                    continue;
-                }
-                let original = run.get(0, *alloc);
-                let rewritten = match folded {
-                    Some((_, reg, slot)) if alloc.as_reg() == Some(*reg) => {
-                        folded_reads += 1;
-                        run.get(REWRITTEN, Allocation::stack(*slot))
-                    }
-                    _ => run.get(REWRITTEN, *alloc),
-                };
-                assert_eq!(
-                    original, rewritten,
-                    "reload folding changed {alloc} read by {iix:?}: {inst:?}",
-                );
-            }
-            if let Some((_, reg, slot)) = folded {
-                assert_eq!(folded_reads, 1, "{iix:?} read {reg} more than once");
+            if let Some((reg, slot)) = folded {
                 // A fold needs exactly one foldable read of the register
                 // and no other, so the rewritten instruction, which lost
                 // that read, must not be foldable again.
-                let (offset, bytes, aligned) = self.reload_slot(*reg, *slot);
+                let offset = self.abi.get_spillslot_offset(slot);
+                let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
+                let aligned = self.abi.spillslot_aligned_16(slot);
                 let again = inst
                     .clone()
-                    .fold_reload((*reg).into(), offset, bytes, aligned, false);
+                    .fold_reload(reg.into(), offset, bytes, aligned, false);
                 assert!(!again, "{iix:?} still reads {reg}: {inst:?}");
             }
-
-            if let Some(clobbers) = self.clobbers.get(&iix) {
-                for reg in *clobbers {
-                    let symbol = run.symbol(Symbol::Clobber(iix, reg));
-                    for locations in &mut run.locations {
-                        locations.insert(Allocation::reg(reg), symbol);
-                    }
-                }
-            }
-            for (i, (operand, alloc)) in operands.iter().zip(allocs).enumerate() {
-                if operand.kind() != OperandKind::Def {
-                    continue;
-                }
-                let keeps = alloc.as_reg().is_some_and(|reg| {
-                    let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
-                    inst.def_keeps_bits(reg.into(), bytes)
-                });
-                for which in 0..2 {
-                    let symbol = if keeps {
-                        let old = run.get(which, *alloc);
-                        run.symbol(Symbol::PartialDef(iix, i, old))
-                    } else {
-                        run.symbol(Symbol::Def(iix, i))
-                    };
-                    run.locations[which].insert(*alloc, symbol);
-                }
-            }
+            let operands = &self.operands[self.operand_ranges.get(iix.index())];
+            let clobbers = self.clobbers.get(&iix).cloned().unwrap_or_default();
+            let may_write = Self::call_temp(inst);
+            check.inst(iix, operands, allocs, clobbers, may_write, folded, |reg| {
+                let bytes = self.abi.canonical_type_for_rc(reg.class()).bytes();
+                inst.def_keeps_bits(reg.into(), bytes)
+            });
         }
-
-        if !returns {
-            let allocs: Vec<Allocation> = run
-                .locations
-                .iter()
-                .flat_map(|locations| locations.keys().copied())
-                .collect();
-            for alloc in allocs {
-                assert_eq!(
-                    run.get(0, alloc),
-                    run.get(REWRITTEN, alloc),
-                    "reload folding changed {alloc} at the end of {block:?}",
-                );
-            }
-        }
+        check.finish();
     }
 
     fn compute_clobbers_and_function_calls(
@@ -1259,11 +1015,9 @@ impl<I: VCodeInst> VCode<I> {
 
         // Debug value locations name the registers the allocator chose, so
         // reloads are kept when they are wanted.
-        let mut reload_folds = ReloadFolds {
-            fold: flags.regalloc_fold_reloads(),
-            forward: flags.regalloc_forward_spills(),
-            ..ReloadFolds::default()
-        };
+        let mut reload_folds = ReloadFolds::default();
+        reload_folds.fold = flags.regalloc_fold_reloads();
+        reload_folds.forward = flags.regalloc_forward_spills();
         let fold_reloads = (reload_folds.fold || reload_folds.forward)
             && I::folds_reloads()
             && self.debug_value_labels.is_empty();

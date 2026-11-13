@@ -251,6 +251,7 @@ pub mod isle;
 
 pub mod lower;
 pub use lower::*;
+pub(crate) mod reload_fold;
 pub mod vcode;
 pub use vcode::*;
 pub mod compile;
@@ -422,6 +423,15 @@ pub trait MachInst: Clone + Debug {
     /// clobber.
     fn folds_reloads() -> bool {
         false
+    }
+
+    /// A register this instruction may write although it is neither a def
+    /// nor a clobber of it. The one case is a call's
+    /// [`ABIMachineSpec::retval_temp_reg`], written when the call copies a
+    /// stack-returned value to a spill slot. The reload rewrites take the
+    /// register's contents as unknown after the instruction.
+    fn call_temp(&self) -> Option<RealReg> {
+        None
     }
 
     /// Is this a safepoint?
