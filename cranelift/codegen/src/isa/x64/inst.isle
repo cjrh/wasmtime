@@ -2458,6 +2458,25 @@
 (rule 0 (x64_cmp ty @ $I32 src1 (is_gpr_mem src2)) (x64_cmpl_rm src1 (gpr_mem_32_for_ty ty src2)))
 (rule 0 (x64_cmp ty @ $I64 src1 (is_gpr_mem src2)) (x64_cmpq_rm src1 (gpr_mem_64_for_ty ty src2)))
 
+;; Helper for creating `cmp` instructions whose first operand may be in memory:
+;; `cmp r/m, r` or `cmp r/m, imm`. The second operand must be a register or an
+;; immediate.
+(decl x64_cmp_mem (Type GprMem GprMemImm) ProducesFlags)
+
+(rule 2 (x64_cmp_mem ty @ $I16 src1 (is_simm8 src2)) (x64_cmpw_mi_sxb (gpr_mem_16_for_ty ty src1) src2))
+(rule 2 (x64_cmp_mem ty @ $I32 src1 (is_simm8 src2)) (x64_cmpl_mi_sxb (gpr_mem_32_for_ty ty src1) src2))
+(rule 2 (x64_cmp_mem ty @ $I64 src1 (is_simm8 src2)) (x64_cmpq_mi_sxb (gpr_mem_64_for_ty ty src1) src2))
+
+(rule 1 (x64_cmp_mem ty @ $I8  src1 (is_imm8   src2)) (x64_cmpb_mi (gpr_mem_8_for_ty  ty src1) src2))
+(rule 1 (x64_cmp_mem ty @ $I16 src1 (is_imm16  src2)) (x64_cmpw_mi (gpr_mem_16_for_ty ty src1) src2))
+(rule 1 (x64_cmp_mem ty @ $I32 src1 (is_imm32  src2)) (x64_cmpl_mi (gpr_mem_32_for_ty ty src1) src2))
+(rule 1 (x64_cmp_mem ty @ $I64 src1 (is_simm32 src2)) (x64_cmpq_mi (gpr_mem_64_for_ty ty src1) src2))
+
+(rule 0 (x64_cmp_mem ty @ $I8  src1 (is_gpr src2)) (x64_cmpb_mr (gpr_mem_8_for_ty  ty src1) src2))
+(rule 0 (x64_cmp_mem ty @ $I16 src1 (is_gpr src2)) (x64_cmpw_mr (gpr_mem_16_for_ty ty src1) src2))
+(rule 0 (x64_cmp_mem ty @ $I32 src1 (is_gpr src2)) (x64_cmpl_mr (gpr_mem_32_for_ty ty src1) src2))
+(rule 0 (x64_cmp_mem ty @ $I64 src1 (is_gpr src2)) (x64_cmpq_mr (gpr_mem_64_for_ty ty src1) src2))
+
 ;; Helper for creating floating-point comparison instructions (`UCOMIS[S|D]`).
 ;;
 ;; `src2` takes a CLIF `Value`, not a sized operand, so the dispatch on
@@ -3958,6 +3977,11 @@
          (produces_flags_opportunistic_def producer prod_value)
          (CC.O))))
 
+;; A load that is only tested is compared with zero in memory. `cmp` reads
+;; exactly the width of its type, so a load of any width qualifies.
+(rule 8 (is_nonzero (and (sinkable_load_exact val) (value_type (ty_int (fits_in_64 ty)))))
+      (CondResult.CC (x64_cmp_mem ty (sink_load_to_gpr_mem val) (RegMemImm.Imm 0)) (CC.NZ)))
+
 ;; Like `is_nonzero` but with additional specializations for compare
 ;; operators. We break this out from `is_nonzero` because we want to
 ;; avoid unbounded recursion.
@@ -4060,6 +4084,21 @@
 (rule 6 (emit_cmp (IntCC.Equal) (u64_from_iconst 0) a) (cond_invert (is_nonzero a)))
 (rule 5 (emit_cmp (IntCC.NotEqual) a (u64_from_iconst 0)) (is_nonzero a))
 (rule 6 (emit_cmp (IntCC.NotEqual) (u64_from_iconst 0) a) (is_nonzero a))
+
+;; A load on the left of the comparison becomes the memory operand of
+;; `cmp r/m, r` or `cmp r/m, imm`, which keeps the condition code as written.
+;; (A load on the right is merged by `x64_cmp` in rule 0.) `cmp` reads exactly
+;; the width of its type, so a load of any width qualifies. The right operand
+;; is forced into a register or an immediate before the load is sunk: sinking
+;; it makes an earlier load mergeable, and `cmp` has one memory operand.
+;;
+;; These take priority over the comparisons with zero above, which would
+;; load the value in order to `test` it.
+(rule 7 (emit_cmp cc (and (sinkable_load_exact a) (value_type (ty_int (fits_in_64 ty)))) b)
+      (let ((b Gpr (put_in_gpr b)))
+        (CondResult.CC (x64_cmp_mem ty (sink_load_to_gpr_mem a) b) cc)))
+(rule 8 (emit_cmp cc (and (sinkable_load_exact a) (value_type (ty_int (fits_in_64 ty)))) (simm32_from_value b))
+      (CondResult.CC (x64_cmp_mem ty (sink_load_to_gpr_mem a) b) cc))
 
 ; Recursion: at most one to eliminate "or equal" cases.
 (decl rec emit_cmp_i128 (CC Gpr Gpr Gpr Gpr) CondResult)
