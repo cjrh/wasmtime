@@ -1,0 +1,295 @@
+test interpret
+test run
+set enable_probestack=false
+target x86_64
+target s390x
+target aarch64
+target riscv64
+target riscv64 has_c has_zcb
+target pulley64
+target pulley64be
+
+;; A backend may merge a load into the compare of the block's branch. These
+;; check that it reads the same memory state as the unmerged load.
+
+function %load_cmp_brif(i64, i64) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i64, v1: i64):
+    v2 = stack_addr.i64 ss0
+    store v1, v2
+    v3 = load.i64 v2
+    v4 = icmp slt v3, v0
+    brif v4, block1, block2
+block1:
+    v5 = iconst.i64 1
+    return v5
+block2:
+    v6 = iconst.i64 2
+    return v6
+}
+
+; run: %load_cmp_brif(5, 4) == 1
+; run: %load_cmp_brif(5, 5) == 2
+; run: %load_cmp_brif(-1, 0) == 2
+; run: %load_cmp_brif(0, -1) == 1
+
+function %store_between(i64, i64) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i64, v1: i64):
+    v2 = stack_addr.i64 ss0
+    store v1, v2
+    v3 = load.i64 v2
+    store v0, v2
+    v4 = icmp slt v3, v0
+    brif v4, block1, block2
+block1:
+    v5 = iconst.i64 1
+    return v5
+block2:
+    v6 = iconst.i64 2
+    return v6
+}
+
+; run: %store_between(5, 4) == 1
+; run: %store_between(5, 5) == 2
+; run: %store_between(4, 5) == 2
+
+function %store_before_merged_load(i64, i64, i64) -> i64 {
+    ss0 = explicit_slot 8
+    ss1 = explicit_slot 8
+block0(v0: i64, v1: i64, v2: i64):
+    v3 = stack_addr.i64 ss0
+    v4 = stack_addr.i64 ss1
+    store v0, v3
+    v5 = load.i64 v3
+    store v1, v3
+    store v1, v4
+    v6 = load.i64 v4
+    v7 = iadd v2, v5
+    v8 = icmp slt v2, v6
+    brif v8, block1, block2
+block1:
+    return v7
+block2:
+    v9 = iconst.i64 -1
+    return v9
+}
+
+; run: %store_before_merged_load(10, 20, 3) == 13
+; run: %store_before_merged_load(10, 2, 3) == -1
+
+function %load_nonzero(i64) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i64):
+    v1 = stack_addr.i64 ss0
+    store v0, v1
+    v2 = load.i64 v1
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; run: %load_nonzero(0) == 2
+; run: %load_nonzero(0x100000000) == 1
+
+function %search_loop(i64, i64, i64, i64) -> i64 {
+    ss0 = explicit_slot 24
+block0(v0: i64, v1: i64, v2: i64, v3: i64):
+    v4 = stack_addr.i64 ss0
+    store v0, v4
+    store v1, v4+8
+    store v2, v4+16
+    v5 = iconst.i64 0
+    jump block1(v5)
+block1(v6: i64):
+    v20 = iconst.i64 3
+    v7 = ishl v6, v20
+    v8 = iadd v4, v7
+    v9 = load.i64 v8
+    v10 = icmp slt v9, v3
+    v21 = iconst.i64 1
+    v11 = iadd v6, v21
+    brif v10, block1(v11), block2
+block2:
+    return v6
+}
+
+; run: %search_loop(1, 5, 9, 0) == 0
+; run: %search_loop(1, 5, 9, 5) == 1
+; run: %search_loop(1, 5, 9, 6) == 2
+
+function %load_imm(i64) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i64):
+    v1 = stack_addr.i64 ss0
+    store v0, v1
+    v2 = load.i64 v1
+    v30 = iconst.i64 1000
+    v3 = icmp sgt v2, v30
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; run: %load_imm(1001) == 1
+; run: %load_imm(1000) == 2
+; run: %load_imm(-1) == 2
+; run: %load_imm(0x7fffffffffffffff) == 1
+
+function %load_big_imm(i64) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i64):
+    v1 = stack_addr.i64 ss0
+    store v0, v1
+    v2 = load.i64 v1
+    v30 = iconst.i64 0x1_0000_0000
+    v3 = icmp eq v2, v30
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; run: %load_big_imm(0x100000000) == 1
+; run: %load_big_imm(0) == 2
+
+;; The narrow loads read only their own bytes: the rest of the slot holds
+;; ones.
+
+function %load_imm_i8(i8) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i8):
+    v1 = stack_addr.i64 ss0
+    v2 = iconst.i64 -1
+    store v2, v1
+    store v0, v1
+    v3 = load.i8 v1
+    v30 = iconst.i8 32
+    v4 = icmp ne v3, v30
+    brif v4, block1, block2
+block1:
+    v5 = iconst.i64 1
+    return v5
+block2:
+    v6 = iconst.i64 2
+    return v6
+}
+
+; run: %load_imm_i8(32) == 2
+; run: %load_imm_i8(33) == 1
+; run: %load_imm_i8(0) == 1
+
+function %load_imm_i16_negative(i16) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i16):
+    v1 = stack_addr.i64 ss0
+    v2 = iconst.i64 0
+    store v2, v1
+    store v0, v1
+    v3 = load.i16 v1
+    v30 = iconst.i16 -2
+    v4 = icmp eq v3, v30
+    brif v4, block1, block2
+block1:
+    v5 = iconst.i64 1
+    return v5
+block2:
+    v6 = iconst.i64 2
+    return v6
+}
+
+; run: %load_imm_i16_negative(-2) == 1
+; run: %load_imm_i16_negative(0xfffe) == 1
+; run: %load_imm_i16_negative(2) == 2
+
+function %load_imm_i32_unsigned(i32) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i32):
+    v1 = stack_addr.i64 ss0
+    v2 = iconst.i64 -1
+    store v2, v1
+    store v0, v1
+    v3 = load.i32 v1
+    v30 = iconst.i32 7
+    v4 = icmp ult v3, v30
+    brif v4, block1, block2
+block1:
+    v5 = iconst.i64 1
+    return v5
+block2:
+    v6 = iconst.i64 2
+    return v6
+}
+
+; run: %load_imm_i32_unsigned(6) == 1
+; run: %load_imm_i32_unsigned(7) == 2
+; run: %load_imm_i32_unsigned(-1) == 2
+
+function %load_lhs_i8(i8, i8) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i8, v1: i8):
+    v2 = stack_addr.i64 ss0
+    v3 = iconst.i64 -1
+    store v3, v2
+    store v0, v2
+    v4 = load.i8 v2
+    v5 = icmp ult v4, v1
+    brif v5, block1, block2
+block1:
+    v6 = iconst.i64 1
+    return v6
+block2:
+    v7 = iconst.i64 2
+    return v7
+}
+
+; run: %load_lhs_i8(1, 2) == 1
+; run: %load_lhs_i8(2, 1) == 2
+; run: %load_lhs_i8(1, 0xff) == 1
+; run: %load_lhs_i8(0xff, 1) == 2
+
+function %load_i8_nonzero(i8) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i8):
+    v1 = stack_addr.i64 ss0
+    v2 = iconst.i64 -1
+    store v2, v1
+    store v0, v1
+    v3 = load.i8 v1
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; run: %load_i8_nonzero(0) == 2
+; run: %load_i8_nonzero(1) == 1
+
+function %select_load_lhs(i64, i64) -> i64 {
+    ss0 = explicit_slot 8
+block0(v0: i64, v1: i64):
+    v2 = stack_addr.i64 ss0
+    store v1, v2
+    v3 = load.i64 v2
+    v4 = icmp slt v3, v0
+    v5 = select v4, v0, v1
+    return v5
+}
+
+; run: %select_load_lhs(5, 4) == 5
+; run: %select_load_lhs(4, 5) == 5
+; run: %select_load_lhs(-3, -4) == -3

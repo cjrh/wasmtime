@@ -1,0 +1,1070 @@
+test compile precise-output
+target x86_64
+
+;; A load whose only use is the compare of the block's branch is merged into
+;; the `cmp`, whichever operand it is.
+
+function %load_rhs(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    v3 = icmp slt v0, v2
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   cmpq (%rsi), %rdi
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   cmpq (%rsi), %rdi ; trap: heap_oob
+;   jl 0x17
+; block2: ; offset 0xd
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x17
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %load_lhs(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    v3 = icmp slt v2, v0
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rsi), %rsi
+;   cmpq %rdi, %rsi
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rsi), %rsi ; trap: heap_oob
+;   cmpq %rdi, %rsi
+;   jl 0x1a
+; block2: ; offset 0x10
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1a
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The search loop of Plenty issue #935: `while limits[k] < r: k += 1`.
+
+function %search_loop(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = iconst.i64 0
+    jump block1(v2)
+block1(v3: i64):
+    v20 = iconst.i64 3
+    v4 = ishl v3, v20
+    v5 = iadd v0, v4
+    v6 = load.i64 v5
+    v7 = icmp slt v6, v1
+    v21 = iconst.i64 1
+    v8 = iadd v3, v21
+    brif v7, block1(v8), block2
+block2:
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   uninit  %rax
+;   xorq %rax, %rax
+;   jmp     label1
+; block1:
+;   movq (%rdi, %rax, 8), %r9
+;   leaq 1(%rax), %r8
+;   cmpq %rsi, %r9
+;   jl      label2; j label3
+; block2:
+;   movq %r8, %rax
+;   jmp     label1
+; block3:
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   xorq %rax, %rax
+; block2: ; offset 0x7
+;   movq (%rdi, %rax, 8), %r9 ; trap: heap_oob
+;   leaq 1(%rax), %r8
+;   cmpq %rsi, %r9
+;   jge 0x20
+; block3: ; offset 0x18
+;   movq %r8, %rax
+;   jmp 7
+; block4: ; offset 0x20
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A loaded value that the branch tests directly.
+
+function %load_nonzero(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i64 v0
+    brif v1, block1, block2
+block1:
+    v2 = iconst.i64 1
+    return v2
+block2:
+    v3 = iconst.i64 2
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rdi), %rsi
+;   testq %rsi, %rsi
+;   jnz     label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rdi), %rsi ; trap: heap_oob
+;   testq %rsi, %rsi
+;   jne 0x1a
+; block2: ; offset 0x10
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1a
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A store between the load and the branch: the load stays where it is.
+
+function %store_between(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    store v0, v1
+    v3 = icmp slt v0, v2
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rsi), %r8
+;   movq %rdi, (%rsi)
+;   cmpq %r8, %rdi
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rsi), %r8 ; trap: heap_oob
+;   movq %rdi, (%rsi) ; trap: heap_oob
+;   cmpq %r8, %rdi
+;   jl 0x1d
+; block2: ; offset 0x13
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1d
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A load with a second use stays in a register.
+
+function %two_uses(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    v3 = icmp slt v0, v2
+    brif v3, block1, block2
+block1:
+    return v2
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rsi), %rax
+;   cmpq %rax, %rdi
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rsi), %rax ; trap: heap_oob
+;   cmpq %rax, %rdi
+;   jl 0x1a
+; block2: ; offset 0x10
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1a
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; Two loads compared with each other: only the later one can be an operand
+;; of the `cmp`.
+
+function %two_loads(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v0
+    v3 = load.i64 v1
+    v4 = icmp slt v2, v3
+    brif v4, block1, block2
+block1:
+    v5 = iconst.i64 1
+    return v5
+block2:
+    v6 = iconst.i64 2
+    return v6
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rdi), %rdi
+;   cmpq (%rsi), %rdi
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rdi), %rdi ; trap: heap_oob
+;   cmpq (%rsi), %rdi ; trap: heap_oob
+;   jl 0x1a
+; block2: ; offset 0x10
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1a
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; After the branch has merged the later load, an instruction of the block's
+;; body can still merge the earlier one, and the loads keep their order.
+
+function %body_merges_earlier_load(i64, i64, i64) -> i64 {
+block0(v0: i64, v1: i64, v2: i64):
+    v3 = load.i64 v0
+    v4 = load.i64 v1
+    v5 = iadd v2, v3
+    v6 = icmp slt v2, v4
+    brif v6, block1, block2
+block1:
+    return v5
+block2:
+    v7 = iconst.i64 2
+    return v7
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq %rdx, %rax
+;   addq (%rdi), %rax
+;   cmpq (%rsi), %rdx
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq %rdx, %rax
+;   addq (%rdi), %rax ; trap: heap_oob
+;   cmpq (%rsi), %rdx ; trap: heap_oob
+;   jl 0x1d
+; block2: ; offset 0x13
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1d
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A store before the load the branch merged still blocks an earlier load.
+
+function %store_before_merged_load(i64, i64, i64) -> i64 {
+block0(v0: i64, v1: i64, v2: i64):
+    v3 = load.i64 v0
+    store v2, v1
+    v4 = load.i64 v1
+    v5 = iadd v2, v3
+    v6 = icmp slt v2, v4
+    brif v6, block1, block2
+block1:
+    return v5
+block2:
+    v7 = iconst.i64 2
+    return v7
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rdi), %rdi
+;   movq %rdx, (%rsi)
+;   leaq (%rdx, %rdi), %rax
+;   cmpq (%rsi), %rdx
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rdi), %rdi ; trap: heap_oob
+;   movq %rdx, (%rsi) ; trap: heap_oob
+;   leaq (%rdx, %rdi), %rax
+;   cmpq (%rsi), %rdx ; trap: heap_oob
+;   jl 0x21
+; block2: ; offset 0x17
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x21
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; `br_table` extends its index, and the extension can read memory.
+
+function %br_table_load(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i32 v0
+    br_table v1, block1, [block2, block1]
+block1:
+    v2 = iconst.i64 1
+    return v2
+block2:
+    v3 = iconst.i64 2
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movl $0x2, %esi
+;   movl (%rdi), %edi
+;   cmpl %esi, %edi
+;   cmovbl %edi, %esi
+;   br_table %rsi, %r11, %rax
+; block1:
+;   jmp     label4
+; block2:
+;   jmp     label4
+; block3:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block4:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movl $2, %esi
+;   movl (%rdi), %edi ; trap: heap_oob
+;   cmpl %esi, %edi
+;   cmovbl %edi, %esi
+;   leaq 0xa(%rip), %r11
+;   movslq (%r11, %rsi, 4), %rax
+;   addq %rax, %r11
+;   jmpq *%r11
+;   adcl %eax, (%rax)
+;   addb %al, (%rax)
+;   sbbl (%rax), %eax
+;   addb %al, (%rax)
+;   sbbl (%rax), %eax
+;   addb %al, (%rax)
+; block2: ; offset 0x2d
+;   jmp 0x3c
+; block3: ; offset 0x32
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block4: ; offset 0x3c
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A load compared with a constant, at each width.
+
+function %load_imm_i64(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i64 v0
+    v30 = iconst.i64 1000
+    v2 = icmp sgt v1, v30
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rdi), %rsi
+;   cmpq $0x3e8, %rsi
+;   jnle    label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rdi), %rsi ; trap: heap_oob
+;   cmpq $0x3e8, %rsi
+;   jg 0x1e
+; block2: ; offset 0x14
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1e
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %load_imm_i32(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i32 v0
+    v30 = iconst.i32 7
+    v2 = icmp ult v1, v30
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movl (%rdi), %esi
+;   cmpl $0x7, %esi
+;   jb      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movl (%rdi), %esi ; trap: heap_oob
+;   cmpl $7, %esi
+;   jb 0x19
+; block2: ; offset 0xf
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x19
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %load_imm_i16(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i16 v0
+    v30 = iconst.i16 -2
+    v2 = icmp eq v1, v30
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movzwq (%rdi), %rsi
+;   cmpw $0xfffe, %si
+;   jz      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movzwq (%rdi), %rsi ; trap: heap_oob
+;   cmpw $-2, %si
+;   je 0x1c
+; block2: ; offset 0x12
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1c
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %load_imm_i8(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i8 v0
+    v30 = iconst.i8 32
+    v2 = icmp ne v1, v30
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movzbq (%rdi), %rsi
+;   cmpb $0x20, %sil
+;   jnz     label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movzbq (%rdi), %rsi ; trap: heap_oob
+;   cmpb $0x20, %sil
+;   jne 0x1c
+; block2: ; offset 0x12
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1c
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %load_eq_zero(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i64 v0
+    v30 = iconst.i64 0
+    v2 = icmp eq v1, v30
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rdi), %rsi
+;   testq %rsi, %rsi
+;   jz      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rdi), %rsi ; trap: heap_oob
+;   testq %rsi, %rsi
+;   je 0x1a
+; block2: ; offset 0x10
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1a
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; A constant that does not fit in 32 bits is put in a register.
+
+function %load_big_imm(i64) -> i64 {
+block0(v0: i64):
+    v1 = load.i64 v0
+    v30 = iconst.i64 0x1_0000_0000
+    v2 = icmp eq v1, v30
+    brif v2, block1, block2
+block1:
+    v3 = iconst.i64 1
+    return v3
+block2:
+    v4 = iconst.i64 2
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rdi), %rsi
+;   cmpq (%rip), %rsi
+;   jz      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rdi), %rsi ; trap: heap_oob
+;   cmpq 0x1a(%rip), %rsi
+;   je 0x1e
+; block2: ; offset 0x14
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1e
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;   addb %al, (%rax)
+;   addb %al, (%rax)
+;   addl %eax, (%rax)
+;   addb %al, (%rax)
+
+;; A narrow load on the left of a compare with a register.
+
+function %load_lhs_i8(i64, i8) -> i64 {
+block0(v0: i64, v1: i8):
+    v2 = load.i8 v0
+    v3 = icmp ult v2, v1
+    brif v3, block1, block2
+block1:
+    v4 = iconst.i64 1
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movzbq (%rdi), %rdi
+;   cmpb %sil, %dil
+;   jb      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movl $0x1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movzbq (%rdi), %rdi ; trap: heap_oob
+;   cmpb %sil, %dil
+;   jb 0x1b
+; block2: ; offset 0x11
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x1b
+;   movl $1, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The compare has two users, so it is lowered twice and the load cannot be
+;; merged into either.
+
+function %cmp_two_uses(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    v3 = icmp slt v2, v0
+    v4 = uextend.i64 v3
+    brif v3, block1, block2
+block1:
+    return v4
+block2:
+    v5 = iconst.i64 2
+    return v5
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rsi), %rsi
+;   cmpq %rdi, %rsi
+;   setl %r8b
+;   movzbq %r8b, %rax
+;   cmpq %rdi, %rsi
+;   jl      label2; j label1
+; block1:
+;   movl $0x2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block2:
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rsi), %rsi ; trap: heap_oob
+;   cmpq %rdi, %rsi
+;   setl %r8b
+;   movzbq %r8b, %rax
+;   cmpq %rdi, %rsi
+;   jl 0x25
+; block2: ; offset 0x1b
+;   movl $2, %eax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+; block3: ; offset 0x25
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+;; The same merges apply to a compare that is not a branch's.
+
+function %select_load_lhs(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    v3 = icmp slt v2, v0
+    v4 = select v3, v0, v1
+    return v4
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rsi), %r8
+;   cmpq %rdi, %r8
+;   movq %rsi, %rax
+;   cmovlq %rdi, %rax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rsi), %r8 ; trap: heap_oob
+;   cmpq %rdi, %r8
+;   movq %rsi, %rax
+;   cmovlq %rdi, %rax
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %icmp_load_lhs_value(i64, i64) -> i8 {
+block0(v0: i64, v1: i64):
+    v2 = load.i64 v1
+    v3 = icmp slt v2, v0
+    return v3
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movq (%rsi), %rsi
+;   cmpq %rdi, %rsi
+;   setl %al
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movq (%rsi), %rsi ; trap: heap_oob
+;   cmpq %rdi, %rsi
+;   setl %al
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+
+function %trapnz_load(i64) {
+block0(v0: i64):
+    v1 = load.i32 v0
+    trapnz v1, user1
+    return
+}
+
+; VCode:
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block0:
+;   movl (%rdi), %edx
+;   testl %edx, %edx
+;   jnz #trap=user1
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pushq %rbp
+;   movq %rsp, %rbp
+; block1: ; offset 0x4
+;   movl (%rdi), %edx ; trap: heap_oob
+;   testl %edx, %edx
+;   jne 0x13
+;   movq %rbp, %rsp
+;   popq %rbp
+;   retq
+;   ud2 ; trap: user1
+

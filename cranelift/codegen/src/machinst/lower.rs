@@ -833,7 +833,11 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         block: Block,
         ctrl_plane: &mut ControlPlane,
     ) -> CodegenResult<()> {
-        self.cur_scan_entry_color = Some(self.block_end_colors[block]);
+        // The scan color was set when lowering started on this block: it is the
+        // block's end color, or, when the block ends in a branch, the color
+        // `lower_clif_branch()` left, which accounts for any instruction sunk
+        // into the branch.
+        debug_assert!(self.cur_scan_entry_color.is_some());
         // Lowering loop:
         // - For each non-branch instruction, in reverse order:
         //   - If side-effecting (load, store, branch/call/return,
@@ -882,17 +886,19 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
                 data.opcode().is_branch(),
             );
 
+            // Skip lowering branches; these are handled separately
+            // (see `lower_clif_branch()` below), and that already moved the
+            // scan color to before the branch, or to before an instruction it
+            // sank.
+            if self.f.dfg.insts[inst].opcode().is_branch() {
+                continue;
+            }
+
             // Update scan state to color prior to this inst (as we are scanning
             // backward).
             self.cur_inst = Some(inst);
             if has_side_effect {
                 self.cur_scan_entry_color = Some(entry_color);
-            }
-
-            // Skip lowering branches; these are handled separately
-            // (see `lower_clif_branches()` below).
-            if self.f.dfg.insts[inst].opcode().is_branch() {
-                continue;
             }
 
             // Value defined by "inst" becomes live after it in normal
@@ -1133,8 +1139,16 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
             block, branch, targets,
         );
         // When considering code-motion opportunities, consider the current
-        // program point to be this branch.
+        // program point to be this branch. The branch is the block's last
+        // instruction and is lowered before the block's body, so giving it its
+        // entry color lets it merge a side-effecting instruction (e.g. a load
+        // into the compare it tests) exactly as a body instruction can.
+        // `sink_inst()` then moves the scan color to before the sunk
+        // instruction, and `lower_clif_block()` continues from that color.
         self.cur_inst = Some(branch);
+        let entry_color = self.side_effect_inst_entry_colors[branch];
+        debug_assert_eq!(entry_color.get() + 1, self.block_end_colors[block].get());
+        self.cur_scan_entry_color = Some(entry_color);
 
         // Lower the branch in ISLE.
         backend
@@ -1272,6 +1286,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
 
             // End branch.
             if let Some(bb) = lb.orig_block() {
+                self.cur_scan_entry_color = Some(self.block_end_colors[bb]);
                 if let Some(branch) = self.collect_branch_and_targets(bindex, bb, &mut targets) {
                     let branch_start = self.vcode.vcode.num_insts();
                     self.lower_clif_branch(backend, bindex, bb, branch, &targets)?;
